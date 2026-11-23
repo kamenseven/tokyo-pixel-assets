@@ -37,7 +37,7 @@
   }
   main:active { cursor: grabbing; }
   main.play-drive, main.play-shatter { cursor: pointer; }
-  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; transform-origin: center center; will-change: transform; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; position: absolute; top: 0; left: 0; transform-origin: top left; will-change: transform; }
   .toy-bar, .scene-bar {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
     display: none; align-items: center; gap: 6px; padding: 5px 8px;
@@ -656,12 +656,13 @@ function extractVolumeFromImage(img, count, populateShatter = false, cols = coun
   const h = Math.floor(img.height / rows);
   if (w < 1 || h < 1) return null;
 
-  const off = document.createElement("canvas");
-  off.width = img.width;
-  off.height = img.height;
-  const octx = off.getContext("2d", { willReadFrequently: true });
-  octx.imageSmoothingEnabled = false;
-  octx.drawImage(img, 0, 0);
+  // Read one slice at a time into a SMALL tile canvas. A single full-strip offscreen
+  // canvas can exceed mobile canvas-area limits (iOS ~16M px) -> blank/"all white" model.
+  const tile = document.createElement("canvas");
+  tile.width = w;
+  tile.height = h;
+  const tctx = tile.getContext("2d", { willReadFrequently: true });
+  tctx.imageSmoothingEnabled = false;
 
   const area = w * h;
   const total = count * area;
@@ -672,7 +673,9 @@ function extractVolumeFromImage(img, count, populateShatter = false, cols = coun
 
   for (let z = 0; z < count; z++) {
     const sc = z % cols, sr = Math.floor(z / cols);
-    const data = octx.getImageData(sc * w, sr * h, w, h).data;
+    tctx.clearRect(0, 0, w, h);
+    tctx.drawImage(img, sc * w, sr * h, w, h, 0, 0, w, h);
+    const data = tctx.getImageData(0, 0, w, h).data;
     const base = z * area;
     let minX = w, maxX = -1, minY = h, maxY = -1;
     for (let y = 0; y < h; y++) {
@@ -2317,7 +2320,7 @@ function fitView() {
   const v = state.vol;
   const modelW = Math.hypot(v.w, v.h) + 10;
   const modelH = v.h * state.squash + v.n * Math.max(1, state.spacing) + 18;
-  const fit = Math.min(rect.width / modelW, rect.height / modelH);
+  const fit = Math.min(rect.width / modelW, rect.height / modelH) * 0.96;
   const sc = Math.max(1, Math.min(14, Math.floor(fit)));
   state.scale = sc;
   els.scale.value = String(sc); els.scaleOut.textContent = sc + 'x';
@@ -2399,6 +2402,18 @@ function endPointer(e) {
 stage.addEventListener("pointerup", endPointer);
 stage.addEventListener("pointercancel", endPointer);
 window.addEventListener("resize", fitView);
+// Re-fit when the stage actually gets its layout size (iframe/mobile late layout) — fixes "blank white" on open.
+if (typeof ResizeObserver !== "undefined") {
+  let lastW = 0, lastH = 0;
+  new ResizeObserver(() => {
+    const r = stage.getBoundingClientRect();
+    if (Math.abs(r.width - lastW) > 1 || Math.abs(r.height - lastH) > 1) {
+      lastW = r.width; lastH = r.height; fitView();
+    }
+  }).observe(stage);
+}
+setTimeout(fitView, 120);
+setTimeout(fitView, 500);
 
 function syncPlayUI() {
   const isPlay = state.mode === "play";
