@@ -1,0 +1,2673 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sprite Stack Viewer</title>
+<style>
+  :root {
+    --bg: #f1f4f8;
+    --surface: #ffffff;
+    --border: #dde3ec;
+    --text: #141820;
+    --muted: #667085;
+    --accent: #2563eb;
+  }
+  * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #c6ceda transparent; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 ui-sans-serif, -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  body { display: grid; grid-template-rows: auto 1fr auto; }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .title { font-weight: 600; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
+  .meta { font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .modes, .actions { display: flex; align-items: center; gap: 4px; }
+  button, label.btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: 4px 9px; border-radius: 4px; font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer; user-select: none;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  button:hover, label.btn:hover { background: #f6f8fb; border-color: #c5cedb; }
+  button[aria-pressed="true"] { background: var(--text); color: #fff; border-color: var(--text); }
+  main {
+    position: relative; display: grid; place-items: center; overflow: hidden; cursor: grab; touch-action: none;
+    background: var(--stage-bg, var(--bg));
+    transition: background-color 180ms ease;
+  }
+  main:active { cursor: grabbing; }
+  main.play-drive, main.play-shatter { cursor: pointer; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; position: absolute; top: 0; left: 0; transform-origin: top left; will-change: transform; }
+  .toy-bar, .scene-bar {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    display: none; align-items: center; gap: 6px; padding: 5px 8px;
+    background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+    z-index: 4;
+  }
+  .toy-bar.visible, .scene-bar.visible { display: flex; }
+  .pill-group { display: inline-flex; align-items: center; gap: 2px; }
+  .pill-group button { padding: 3px 7px; font-size: 11px; }
+  .toy-hint {
+    font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+    padding: 0 4px 0 6px; border-left: 1px solid var(--border); white-space: nowrap;
+  }
+  .readout {
+    position: absolute; right: 16px; bottom: 14px;
+    font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+    color: var(--readout-color, var(--muted)); letter-spacing: 0.03em; pointer-events: none;
+  }
+  .drop-hint {
+    position: absolute; inset: 16px; border: 1px dashed #9fb0c8; border-radius: 6px;
+    display: none; place-items: center; background: rgba(241, 244, 248, 0.92); color: var(--text); font-weight: 500;
+    z-index: 10;
+  }
+  body.dragging .drop-hint { display: grid; }
+  footer {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface);
+  }
+  .ctrl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .ctrl output {
+    min-width: 36px; text-align: right; color: var(--text);
+    font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+  }
+  .sep { width: 1px; height: 18px; background: var(--border); }
+  input[type="range"] { width: 84px; accent-color: var(--text); margin: 0; }
+  input[type="number"] {
+    width: 50px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px;
+    font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text);
+  }
+  input[type="checkbox"] { accent-color: var(--text); margin: 0; }
+  .spacer { flex: 1; }
+  #fileInput { display: none; }
+  .gesture-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+    font: 11px/1.3 ui-monospace, Menlo, monospace; color: var(--readout-color, var(--muted));
+    background: rgba(255,255,255,0.7); padding: 3px 9px; border-radius: 10px; pointer-events: none;
+    white-space: nowrap; z-index: 3; display: none; }
+  #resetView { position: absolute; right: 12px; top: 12px; z-index: 5; display: none;
+    font-size: 12px; padding: 6px 10px; border-radius: 6px; }
+  /* ---- mobile / touch ---- */
+  @media (max-width: 760px), (pointer: coarse) {
+    html, body { font-size: 12px; }
+    header { padding: 6px 10px; gap: 6px; }
+    .title { font-size: 13px; }
+    .modes, .actions { gap: 3px; }
+    button, label.btn { padding: 5px 8px; font-size: 12px; }
+    main { min-height: 0; }
+    footer {
+      flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; gap: 12px;
+      padding: 8px 10px; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    }
+    footer::-webkit-scrollbar { display: none; }
+    .ctrl { flex: 0 0 auto; font-size: 12px; }
+    input[type="range"] { width: 70px; }
+    .spacer, #footerHint { display: none; }
+    .gesture-hint { display: block; }
+    #resetView { display: block; }
+    .readout { display: none; }
+    .toy-hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">
+    <span id="titleText">Sprite Stack</span>
+    <span class="meta" id="metaText">Drop a slice sheet PNG</span>
+  </div>
+  <div class="modes" role="group" aria-label="View mode">
+    <button data-mode="turntable" aria-pressed="true">Turntable</button>
+    <button data-mode="scene" aria-pressed="false">Scene</button>
+    <button data-mode="scan" aria-pressed="false">Slice scan</button>
+    <button data-mode="exploded" aria-pressed="false">Exploded</button>
+    <button data-mode="play" aria-pressed="false">Play</button>
+  </div>
+  <div class="actions">
+    <button id="playBtn" title="Space">Pause</button>
+    <button id="exportBtn" title="Export 16-angle sprite sheet PNG">Export 16-dir</button>
+    <label class="btn" for="fileInput">Load PNG</label>
+    <input id="fileInput" type="file" accept="image/png,image/webp" multiple />
+    <input id="propInput" type="file" accept="image/png,image/webp" multiple style="display:none" />
+  </div>
+</header>
+
+<main id="stage">
+  <div class="scene-bar" id="sceneBar" role="group" aria-label="Diorama scene">
+    <button data-scene="street" aria-pressed="true">Neon Street</button>
+    <button data-scene="island" aria-pressed="false">Meadow Island</button>
+    <label class="btn" for="propInput" title="Add another slice sheet PNG to the diorama">+ Add Prop</label>
+    <button id="clearPropsBtn" style="display:none" title="Remove added props">Clear</button>
+    <span class="toy-hint" id="sceneHint">Drag to orbit · Drop PNGs to add</span>
+  </div>
+  <div class="toy-bar" id="toyBar" role="group" aria-label="Play toys">
+    <button data-toy="drive" aria-pressed="true">Drive</button>
+    <button data-toy="wind" aria-pressed="false">Wind</button>
+    <button data-toy="shatter" aria-pressed="false">Shatter</button>
+    <span class="sep"></span>
+    <span class="pill-group" id="driveWorldGroup" role="group" aria-label="Drive world">
+      <button data-drive-world="street" aria-pressed="true">Street</button>
+      <button data-drive-world="island" aria-pressed="false">Meadow</button>
+      <button data-drive-world="grid" aria-pressed="false">Grid</button>
+    </span>
+    <span class="toy-hint" id="toyHint">WASD / Arrows · Space drift</span>
+  </div>
+  <canvas id="view"></canvas>
+  <button id="resetView" title="Reset zoom / pan">⟲ Reset view</button>
+  <div class="gesture-hint" id="gestureHint">单指旋转 · 双指缩放/移动 · 双击复位</div>
+  <div class="readout" id="readout"></div>
+  <div class="drop-hint">Drop slice sheet PNGs (hold Shift to add as diorama prop)</div>
+</main>
+
+<footer>
+  <label class="ctrl">Angle
+    <input id="angleRange" type="range" min="0" max="360" step="1" value="35" />
+    <output id="angleOut">35°</output>
+  </label>
+  <label class="ctrl">Squash
+    <input id="squashRange" type="range" min="0.45" max="1" step="0.01" value="0.75" />
+    <output id="squashOut">0.75</output>
+  </label>
+  <label class="ctrl">Spacing
+    <input id="spacingRange" type="range" min="0" max="4" step="0.05" value="1" />
+    <output id="spacingOut">1.00</output>
+  </label>
+  <label class="ctrl">Scale
+    <input id="scaleRange" type="range" min="2" max="14" step="1" value="6" />
+    <output id="scaleOut">6x</output>
+  </label>
+  <label class="ctrl">Slices
+    <input id="slicesInput" type="number" min="1" max="256" value="15" />
+  </label>
+  <span class="sep"></span>
+  <label class="ctrl" title="Day -> Golden Hour -> Midnight">Time
+    <input id="timeRange" type="range" min="0" max="100" step="1" value="0" />
+    <output id="timeOut">Day</output>
+  </label>
+  <label class="ctrl" title="Sun direction (or Shift+drag stage)">Sun
+    <input id="sunRange" type="range" min="0" max="360" step="1" value="42" />
+    <output id="sunOut">42°</output>
+  </label>
+  <label class="ctrl"><input id="lightChk" type="checkbox" checked /> Light</label>
+  <label class="ctrl"><input id="shadowChk" type="checkbox" checked /> Shadow</label>
+  <label class="ctrl"><input id="outlineChk" type="checkbox" checked /> Outline</label>
+  <span class="sep"></span>
+  <span class="ctrl">Weather
+    <span class="pill-group" role="group" aria-label="Weather">
+      <button data-weather="clear" aria-pressed="true">Clear</button>
+      <button data-weather="rain" aria-pressed="false">Rain</button>
+      <button data-weather="snow" aria-pressed="false">Snow</button>
+    </span>
+  </span>
+  <span class="spacer"></span>
+  <span class="meta" id="footerHint">Drag to orbit · Shift+drag sun · Space pause</span>
+</footer>
+
+<script>
+const EMBEDDED = {"title": "Station bus terminal (\u99c5\u524d\u30d0\u30b9\u30bf\u30fc\u30df\u30ca\u30eb) [compact]", "slices": 56, "sliceWidth": 248, "sliceHeight": 207, "cols": 56, "sheet": "data:image/png;base64,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", "top": "data:image/png;base64,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", "side": "data:image/png;base64,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", "front": "data:image/png;base64,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", "back": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPoAAAA6CAYAAACZBESJAAACfklEQVR4nO3cv2sTYRzH8edUOvgHSAgqN0mF4uBY6KL/QgfHLpGQoXTOIOKQWTqE0C4Z/Sd0EUJxcLCBhkynQ8jUsUsbUk640ERKnjO5PM9zn/cLmv4gTb/P9/LJ8+S4p5ExxlSq8TT9DKB8xqMkitKQdzpt17UAKEi93jAPinpwAP54lN5sRdfm/Py361oAFIQZHRBA0AEBzoK+92b374fPqJE+luX5yIwOqJyMs1VrHKztDw8Gw9ljnra7ZpNsx3G3RhsuxpG3Rhu+Ho+8GMd/Bj1t3NfhyKzDx/r+7DE3zXYcWY3vjlpL7/v2RdW4GEe2lLOp0YarcazreZVhHPNYugMCCDoggKADAgg6IICgAwIIOiCAoAMCCDoggKADAgg6IICgAwJyb2qplWRTSy1HjV8+N73f1GJbow1fj0dejGOFTS3rkm3GcLWpxfca825q8bVGGyHXHso4WLoDAgg6IICgAwIIOiCAoAMCCDoggKADAgg6ICDXBTMhuvjzK/fvvHz+yiijZ+XrWemDXjYPH88fst7Zj39+Prm62Xhdqv3P7Gy/nn3dH/w0vmHpDggg6IAAgg4I4D16YJIkWXqfZ0+ebqQWRYlF/31E0AMTx/HS+3Ayzm3/+4NL4xuW7oAAZvTAsHT3v/8+IuiBYenuf//7LN0BuCAzo78/qM99f9LtOKslFPRs9b758jyTCXpZLJ5Rz/455PdvPUcVaZncc3lxdq374oujLzjrDgiQmdF9WUKFhJ6Vp2fM6IAAgg4IIOiAAIIOCCDogACCDggg6ICAqFKNpx+ah67rAFCQT61jZnRAAUt3QABBBwRE6U36Pt11IQBMIcajJLoFB7LF8Rr1hocAAAAASUVORK5CYII="};
+
+const state = {
+  mode: "turntable",
+  scene: "street",     // "street" | "island"
+  driveWorld: "street", // "street" | "island" | "grid"
+  weather: "clear",    // "clear" | "rain" | "snow"
+  toy: "drive",
+  playing: true,
+  angle: 35,
+  squash: 0.75,
+  spacing: 1.0,
+  scale: 6,
+  panX: 0, panY: 0, userZoom: 1,   // mobile pinch-zoom / two-finger pan (CSS transform on canvas)
+  slices: 15,
+  timeOfDay: 0,    // 0 = Day, 50 = Sunset, 100 = Night
+  sunAngle: 42,    // degrees
+  lighting: true,
+  shadow: true,
+  outline: true,
+  scanZ: 1,
+  explodePhase: 0,
+  windPhase: 0,
+  sheetImg: null,
+  topImg: null,
+  sideImg: null,
+  vol: null,       // Precomputed compact voxel volume
+  userProps: [],   // Extra user-loaded slice-sheet assets for diorama [{ name, vol, x, y, rot }]
+  dirty: true,
+  lastRenderMs: 0,
+};
+
+// Weather engine (zero per-frame heap allocations)
+const RAIN_COUNT = 110;
+const RIPPLE_COUNT = 36;
+const SNOW_COUNT = 100;
+const weather = {
+  time: 0,
+  snowCover: 0,    // 0..1 smooth accumulation on upward-facing voxels
+  wetness: 0,      // 0..1 smooth ground wetness / reflection strength
+  // Raindrops: x, y (0..1 normalized), speed, len
+  rain: new Float32Array(RAIN_COUNT * 4),
+  // Ground ripples: x, y (0..1), age (0..1), maxR
+  ripples: new Float32Array(RIPPLE_COUNT * 4),
+  // Snowflakes: x, y (0..1), speed, phase
+  snow: new Float32Array(SNOW_COUNT * 4),
+};
+for (let i = 0; i < RAIN_COUNT; i++) {
+  weather.rain[i * 4] = Math.random();
+  weather.rain[i * 4 + 1] = Math.random();
+  weather.rain[i * 4 + 2] = 1.45 + Math.random() * 0.85;
+  weather.rain[i * 4 + 3] = 4 + Math.floor(Math.random() * 4);
+}
+for (let i = 0; i < RIPPLE_COUNT; i++) {
+  weather.ripples[i * 4] = Math.random();
+  weather.ripples[i * 4 + 1] = 0.28 + Math.random() * 0.68;
+  weather.ripples[i * 4 + 2] = Math.random();
+  weather.ripples[i * 4 + 3] = 4 + Math.floor(Math.random() * 4);
+}
+for (let i = 0; i < SNOW_COUNT; i++) {
+  weather.snow[i * 4] = Math.random();
+  weather.snow[i * 4 + 1] = Math.random();
+  weather.snow[i * 4 + 2] = 0.16 + Math.random() * 0.16;
+  weather.snow[i * 4 + 3] = Math.random() * Math.PI * 2;
+}
+
+// Reusable 4-int scratch for sliceScreenBounds (zero GC per slice)
+const _sb = new Int32Array(4);
+
+// Cached rasterized diorama props keyed by model + quantized lighting/angle state
+const propCache = new Map();
+const PROP_CACHE_MAX = 96;
+
+// Reusable offscreen buffer for wavy wet reflections (avoids canvas allocs)
+const reflBuf = {
+  w: 0, h: 0,
+  canvas: document.createElement("canvas"),
+  ctx: null,
+};
+reflBuf.ctx = reflBuf.canvas.getContext("2d");
+
+// Interactive Toy Mode state (zero per-frame heap allocations)
+const drive = {
+  x: 0, y: 0, vx: 0, vy: 0,
+  heading: -Math.PI * 0.25, // radians in world space
+  speed: 0, steer: 0,
+  drifting: false,
+  lean: 0,
+  bounce: 0,
+  bounceVel: 0,
+  skids: new Float32Array(240 * 3), // x, y, life
+  skidHead: 0,
+  puffs: new Float32Array(96 * 6),  // x, y, z, vx, vy, life
+  puffHead: 0,
+  puffTimer: 0,
+};
+
+const keys = { up: false, down: false, left: false, right: false, brake: false };
+
+const shatter = {
+  phase: "idle", // "idle" | "burst" | "rebuild"
+  t: 0,
+  count: 0,
+  // Per-particle home & live state (max 700 voxels)
+  hx: new Float32Array(700), hy: new Float32Array(700), hz: new Float32Array(700),
+  px: new Float32Array(700), py: new Float32Array(700), pz: new Float32Array(700),
+  vx: new Float32Array(700), vy: new Float32Array(700), vz: new Float32Array(700),
+  sx: new Float32Array(700), sy: new Float32Array(700), sz: new Float32Array(700), // rebuild start
+  col: new Uint32Array(700),
+  em: new Uint8Array(700),
+};
+
+// Reusable scratch buffers for zero-GC software rasterization
+const scratch = {
+  w: 0, h: 0,
+  canvas: document.createElement("canvas"),
+  ctx: null,
+  imgData: null,
+  out8: null,
+  out32: null,
+  alpha: null,
+  emis: null,
+  shadow: null,
+};
+scratch.ctx = scratch.canvas.getContext("2d");
+
+function ensureScratch(cw, ch) {
+  if (scratch.w === cw && scratch.h === ch) return;
+  scratch.w = cw;
+  scratch.h = ch;
+  scratch.canvas.width = cw;
+  scratch.canvas.height = ch;
+  scratch.imgData = scratch.ctx.createImageData(cw, ch);
+  scratch.out8 = scratch.imgData.data;
+  scratch.out32 = new Uint32Array(scratch.out8.buffer);
+  const len = cw * ch;
+  scratch.alpha = new Uint8Array(len);
+  scratch.emis = new Uint8Array(len);
+  scratch.shadow = new Uint8Array(len);
+}
+
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+const stage = document.getElementById("stage");
+const readout = document.getElementById("readout");
+const titleText = document.getElementById("titleText");
+const metaText = document.getElementById("metaText");
+const toyBar = document.getElementById("toyBar");
+const toyHint = document.getElementById("toyHint");
+const sceneBar = document.getElementById("sceneBar");
+const sceneHint = document.getElementById("sceneHint");
+const clearPropsBtn = document.getElementById("clearPropsBtn");
+const driveWorldGroup = document.getElementById("driveWorldGroup");
+const footerHint = document.getElementById("footerHint");
+
+const els = {
+  angle: document.getElementById("angleRange"),
+  angleOut: document.getElementById("angleOut"),
+  squash: document.getElementById("squashRange"),
+  squashOut: document.getElementById("squashOut"),
+  spacing: document.getElementById("spacingRange"),
+  spacingOut: document.getElementById("spacingOut"),
+  scale: document.getElementById("scaleRange"),
+  scaleOut: document.getElementById("scaleOut"),
+  slices: document.getElementById("slicesInput"),
+  time: document.getElementById("timeRange"),
+  timeOut: document.getElementById("timeOut"),
+  sun: document.getElementById("sunRange"),
+  sunOut: document.getElementById("sunOut"),
+  light: document.getElementById("lightChk"),
+  shadow: document.getElementById("shadowChk"),
+  outline: document.getElementById("outlineChk"),
+  play: document.getElementById("playBtn"),
+  exportBtn: document.getElementById("exportBtn"),
+};
+
+function clampByte(v) { return v < 0 ? 0 : (v > 255 ? 255 : v | 0); }
+function packABGR(r, g, b, a = 255) { return ((a & 255) << 24) | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+// Compute lighting theme parameters from timeOfDay (0..100) and sunAngle (deg)
+function getLightingEnv(timeOfDay, sunAngleDeg) {
+  const t = timeOfDay / 100; // 0 = Day, 0.5 = Sunset, 1 = Night
+  const sunsetW = Math.max(0, 1 - Math.abs(t - 0.5) * 2.4);
+  const nightW = Math.max(0, (t - 0.48) / 0.52);
+  const dayW = Math.max(0, 1 - t * 2);
+
+  // Sun elevation: high at noon (58°), low at sunset (20°), moon at night (38°)
+  const elevDeg = t <= 0.5 ? lerp(58, 18, t * 2) : lerp(18, 40, (t - 0.5) * 2);
+  const elev = (elevDeg * Math.PI) / 180;
+  const az = (sunAngleDeg * Math.PI) / 180;
+  const cosE = Math.cos(elev);
+  const lx = Math.cos(az) * cosE;
+  const ly = Math.sin(az) * cosE;
+  const lz = Math.sin(elev);
+
+  // Cast shadow vector per unit Z height (in art pixels on ground plane)
+  const shadowLen = Math.min(1.65, Math.max(0.28, (1 / Math.max(Math.tan(elev), 0.35)) * 0.52));
+  const shDx = -Math.cos(az) * shadowLen;
+  const shDy = -Math.sin(az) * shadowLen;
+
+  // Stage background RGB
+  let bgR, bgG, bgB;
+  if (t <= 0.5) {
+    const u = t * 2;
+    bgR = Math.round(lerp(241, 236, u));
+    bgG = Math.round(lerp(244, 218, u));
+    bgB = Math.round(lerp(248, 204, u));
+  } else {
+    const u = (t - 0.5) * 2;
+    bgR = Math.round(lerp(236, 15, u));
+    bgG = Math.round(lerp(218, 21, u));
+    bgB = Math.round(lerp(204, 38, u));
+  }
+
+  // Shadow color on ground
+  const shR = Math.round(lerp(lerp(186, 156, sunsetW), 7, nightW));
+  const shG = Math.round(lerp(lerp(198, 134, sunsetW), 10, nightW));
+  const shB = Math.round(lerp(lerp(212, 146, sunsetW), 20, nightW));
+
+  // Outline color
+  const olR = Math.round(lerp(24, 6, nightW));
+  const olG = Math.round(lerp(28, 9, nightW));
+  const olB = Math.round(lerp(36, 18, nightW));
+
+  // 3-band hue-shifted multipliers: [shadowBand, midBand, litBand]
+  const shMulR = lerp(lerp(0.76, 0.62, sunsetW), 0.24, nightW);
+  const shMulG = lerp(lerp(0.80, 0.58, sunsetW), 0.28, nightW);
+  const shMulB = lerp(lerp(0.90, 0.78, sunsetW), 0.44, nightW);
+
+  const midMulR = lerp(lerp(0.97, 1.00, sunsetW), 0.38, nightW);
+  const midMulG = lerp(lerp(0.98, 0.86, sunsetW), 0.44, nightW);
+  const midMulB = lerp(lerp(1.00, 0.82, sunsetW), 0.62, nightW);
+
+  const litMulR = lerp(lerp(1.10, 1.24, sunsetW), 0.58, nightW);
+  const litMulG = lerp(lerp(1.08, 1.04, sunsetW), 0.66, nightW);
+  const litMulB = lerp(lerp(1.03, 0.84, sunsetW), 0.88, nightW);
+
+  // Emissive strength ramps smoothly from sunset into night
+  const emisGlow = Math.max(0, Math.min(1, (t - 0.32) / 0.42));
+
+  return {
+    t, dayW, sunsetW, nightW, emisGlow,
+    lx, ly, lz, shDx, shDy,
+    bgR, bgG, bgB, bgHex: `rgb(${bgR}, ${bgG}, ${bgB})`,
+    shPacked: packABGR(shR, shG, shB),
+    olPacked: packABGR(olR, olG, olB),
+    shMulR, shMulG, shMulB,
+    midMulR, midMulG, midMulB,
+    litMulR, litMulG, litMulB,
+  };
+}
+
+function updateStageTheme() {
+  const env = getLightingEnv(state.timeOfDay, state.sunAngle);
+  stage.style.setProperty("--stage-bg", env.bgHex);
+  stage.style.setProperty("--readout-color", env.nightW > 0.45 ? "#8b98b8" : "var(--muted)");
+  if (state.timeOfDay < 25) els.timeOut.textContent = "Day";
+  else if (state.timeOfDay < 72) els.timeOut.textContent = "Sunset";
+  else els.timeOut.textContent = "Night";
+}
+
+// Build a compact voxel volume (normals, AO, emissive, snowMask, bounds) from raw occupancy + RGB
+function buildVolumeFromPixels(w, h, count, occ, rgb, rgb32, bounds, opts = {}) {
+  const area = w * h;
+  const total = count * area;
+  const normX = new Float32Array(total);
+  const normY = new Float32Array(total);
+  const normZ = new Float32Array(total);
+  const ao = new Float32Array(total);
+  const surfaceMask = new Uint8Array(total);
+  const colorCounts = new Map();
+  let surfCount = 0;
+
+  const at = (z, y, x) => (z >= 0 && z < count && y >= 0 && y < h && x >= 0 && x < w) ? occ[z * area + y * w + x] : 0;
+
+  for (let z = 0; z < count; z++) {
+    const b = bounds[z];
+    if (b.empty) continue;
+    const zBase = z * area;
+    for (let y = b.minY; y <= b.maxY; y++) {
+      const row = zBase + y * w;
+      for (let x = b.minX; x <= b.maxX; x++) {
+        const idx = row + x;
+        if (!occ[idx]) continue;
+
+        const xp = at(z, y, x + 1), xm = at(z, y, x - 1);
+        const yp = at(z, y + 1, x), ym = at(z, y - 1, x);
+        const zp = at(z + 1, y, x), zm = at(z - 1, y, x);
+
+        const isSurf = !(xp && xm && yp && ym && zp && zm);
+        if (isSurf) {
+          surfaceMask[idx] = 1;
+          surfCount++;
+          const key = rgb32[idx];
+          colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
+        }
+
+        let gx = (xm - xp) * 2
+          + (at(z, y - 1, x - 1) - at(z, y - 1, x + 1))
+          + (at(z, y + 1, x - 1) - at(z, y + 1, x + 1))
+          + (at(z + 1, y, x - 1) - at(z + 1, y, x + 1))
+          + (at(z - 1, y, x - 1) - at(z - 1, y, x + 1));
+        let gy = (ym - yp) * 2
+          + (at(z, y - 1, x - 1) - at(z, y + 1, x - 1))
+          + (at(z, y - 1, x + 1) - at(z, y + 1, x + 1))
+          + (at(z + 1, y - 1, x) - at(z + 1, y + 1, x))
+          + (at(z - 1, y - 1, x) - at(z - 1, y + 1, x));
+        let gz = (zm - zp) * 2
+          + (at(z - 1, y, x - 1) - at(z + 1, y, x - 1))
+          + (at(z - 1, y, x + 1) - at(z + 1, y, x + 1))
+          + (at(z - 1, y - 1, x) - at(z + 1, y - 1, x))
+          + (at(z - 1, y + 1, x) - at(z + 1, y + 1, x));
+
+        const mag = Math.hypot(gx, gy, gz);
+        if (mag > 1e-4) {
+          normX[idx] = gx / mag;
+          normY[idx] = gy / mag;
+          normZ[idx] = gz / mag;
+        } else {
+          normX[idx] = 0; normY[idx] = 0; normZ[idx] = 1;
+        }
+
+        const upperOcc = zp + at(z + 1, y - 1, x) + at(z + 1, y + 1, x) + at(z + 1, y, x - 1) + at(z + 1, y, x + 1);
+        ao[idx] = 1.0 - upperOcc * 0.042;
+      }
+    }
+  }
+
+  // Emissive detection (either explicit mask for procedural props, or smart auto-detect)
+  const emis = opts.explicitEmis ? opts.explicitEmis : new Uint8Array(total);
+  const emissiveSeeds = [];
+  if (!opts.explicitEmis) {
+    const dominant = new Set();
+    if (surfCount > 0) {
+      for (const [k, c] of colorCounts.entries()) {
+        if (c / surfCount > 0.14) dominant.add(k);
+      }
+    }
+    for (let z = 0; z < count; z++) {
+      const b = bounds[z];
+      if (b.empty) continue;
+      const zBase = z * area;
+      for (let y = b.minY; y <= b.maxY; y++) {
+        const row = zBase + y * w;
+        for (let x = b.minX; x <= b.maxX; x++) {
+          const idx = row + x;
+          if (!surfaceMask[idx]) continue;
+          if (dominant.has(rgb32[idx])) continue;
+          const r = rgb[idx * 3], g = rgb[idx * 3 + 1], bl = rgb[idx * 3 + 2];
+          const luma = 0.299 * r + 0.587 * g + 0.114 * bl;
+          const maxC = r > g ? (r > bl ? r : bl) : (g > bl ? g : bl);
+          const minC = r < g ? (r < bl ? r : bl) : (g < bl ? g : bl);
+          const sat = (maxC - minC) / (maxC || 1);
+          if ((luma >= 180 && (sat >= 0.30 || luma >= 232)) || (maxC >= 215 && sat >= 0.62 && luma >= 110)) {
+            emis[idx] = 1;
+            emissiveSeeds.push({ x: x - w * 0.5, y: y - h * 0.5, z, r, g, b: bl });
+          }
+        }
+      }
+    }
+  } else {
+    for (let z = 0; z < count; z++) {
+      const b = bounds[z];
+      if (b.empty) continue;
+      const zBase = z * area;
+      for (let y = b.minY; y <= b.maxY; y++) {
+        const row = zBase + y * w;
+        for (let x = b.minX; x <= b.maxX; x++) {
+          const idx = row + x;
+          if (emis[idx]) emissiveSeeds.push({ x: x - w * 0.5, y: y - h * 0.5, z, r: rgb[idx * 3], g: rgb[idx * 3 + 1], b: rgb[idx * 3 + 2] });
+        }
+      }
+    }
+  }
+
+  // Precompute snow accumulation mask: exposed upward-facing non-emissive voxels (normZ > 0.58)
+  const snowMask = new Uint8Array(total);
+  for (let z = 0; z < count; z++) {
+    const b = bounds[z];
+    if (b.empty) continue;
+    const zBase = z * area;
+    for (let y = b.minY; y <= b.maxY; y++) {
+      const row = zBase + y * w;
+      for (let x = b.minX; x <= b.maxX; x++) {
+        const idx = row + x;
+        if (!occ[idx] || emis[idx]) continue;
+        if (normZ[idx] > 0.42 && (z === count - 1 || !occ[idx + area])) {
+          // Vary threshold slightly with deterministic spatial hash so snow accumulates organically
+          snowMask[idx] = 1 + ((x * 7 + y * 13 + z * 3) & 3); // 1..4
+        }
+      }
+    }
+  }
+
+  const lightPools = [];
+  if (emissiveSeeds.length > 0) {
+    const maxPools = opts.maxPools || 20;
+    const step = Math.max(1, Math.floor(emissiveSeeds.length / maxPools));
+    for (let i = 0; i < emissiveSeeds.length && lightPools.length < maxPools; i += step) {
+      lightPools.push(emissiveSeeds[i]);
+    }
+  }
+
+  if (opts.populateShatter) {
+    const surfList = [];
+    for (let z = 0; z < count; z++) {
+      const b = bounds[z];
+      if (b.empty) continue;
+      const zBase = z * area;
+      for (let y = b.minY; y <= b.maxY; y++) {
+        const row = zBase + y * w;
+        for (let x = b.minX; x <= b.maxX; x++) {
+          const idx = row + x;
+          if (surfaceMask[idx]) surfList.push({ x: x - w * 0.5, y: y - h * 0.5, z, col: rgb32[idx], em: emis[idx] });
+        }
+      }
+    }
+    const sStep = Math.max(1, Math.ceil(surfList.length / 700));
+    let sCount = 0;
+    for (let i = 0; i < surfList.length && sCount < 700; i += sStep) {
+      const v = surfList[i];
+      shatter.hx[sCount] = v.x; shatter.hy[sCount] = v.y; shatter.hz[sCount] = v.z;
+      shatter.col[sCount] = v.col; shatter.em[sCount] = v.em;
+      sCount++;
+    }
+    shatter.count = sCount;
+    shatter.phase = "idle";
+  }
+
+  return {
+    n: count, w, h, area,
+    occ, rgb, rgb32, normX, normY, normZ, ao, emis, snowMask,
+    bounds, lightPools,
+  };
+}
+
+function extractVolumeFromImage(img, count, populateShatter = false, cols = count) {
+  const rows = Math.ceil(count / cols);
+  const w = Math.floor(img.width / cols);
+  const h = Math.floor(img.height / rows);
+  if (w < 1 || h < 1) return null;
+
+  // Read one slice at a time into a SMALL tile canvas. A single full-strip offscreen
+  // canvas can exceed mobile canvas-area limits (iOS ~16M px) -> blank/"all white" model.
+  const tile = document.createElement("canvas");
+  tile.width = w;
+  tile.height = h;
+  const tctx = tile.getContext("2d", { willReadFrequently: true });
+  tctx.imageSmoothingEnabled = false;
+
+  const area = w * h;
+  const total = count * area;
+  const occ = new Uint8Array(total);
+  const rgb = new Uint8Array(total * 3);
+  const rgb32 = new Uint32Array(total);
+  const bounds = new Array(count);
+
+  for (let z = 0; z < count; z++) {
+    const sc = z % cols, sr = Math.floor(z / cols);
+    tctx.clearRect(0, 0, w, h);
+    tctx.drawImage(img, sc * w, sr * h, w, h, 0, 0, w, h);
+    const data = tctx.getImageData(0, 0, w, h).data;
+    const base = z * area;
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const i = row + x;
+        const p = i * 4;
+        if (data[p + 3] > 0) {
+          const idx = base + i;
+          occ[idx] = 1;
+          const r = data[p], g = data[p + 1], b = data[p + 2];
+          rgb[idx * 3] = r;
+          rgb[idx * 3 + 1] = g;
+          rgb[idx * 3 + 2] = b;
+          rgb32[idx] = packABGR(r, g, b, 255);
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    bounds[z] = maxX >= minX
+      ? { minX, maxX, minY, maxY, empty: false }
+      : { minX: 0, maxX: 0, minY: 0, maxY: 0, empty: true };
+  }
+
+  return buildVolumeFromPixels(w, h, count, occ, rgb, rgb32, bounds, { populateShatter });
+}
+
+function extractSlices(img, count, cols = count) {
+  const vol = extractVolumeFromImage(img, count, true, cols);
+  if (!vol) return;
+  state.vol = vol;
+  state.scanZ = count;
+  state.dirty = true;
+  metaText.textContent = `${count} slices · ${vol.w}×${vol.h}px`;
+
+  const ideal = Math.max(2, Math.min(10, Math.floor(320 / Math.max(vol.w, vol.h, count * 2))));
+  state.scale = ideal;
+  els.scale.value = String(ideal);
+  els.scaleOut.textContent = `${ideal}x`;
+  resetView();
+  fitView();
+}
+
+// Compute tight rotated screen-space AABB into module-level _sb (zero GC allocation)
+function sliceScreenBounds(b, w, h, cx, yCenter, ca, sa, squash, cw, ch) {
+  const x0 = b.minX - w * 0.5, x1 = b.maxX + 1 - w * 0.5;
+  const y0 = b.minY - h * 0.5, y1 = b.maxY + 1 - h * 0.5;
+  const c0x = x0 * ca - y0 * sa, c0y = (x0 * sa + y0 * ca) * squash;
+  const c1x = x1 * ca - y0 * sa, c1y = (x1 * sa + y0 * ca) * squash;
+  const c2x = x0 * ca - y1 * sa, c2y = (x0 * sa + y1 * ca) * squash;
+  const c3x = x1 * ca - y1 * sa, c3y = (x1 * sa + y1 * ca) * squash;
+  let minCx = c0x; if (c1x < minCx) minCx = c1x; if (c2x < minCx) minCx = c2x; if (c3x < minCx) minCx = c3x;
+  let maxCx = c0x; if (c1x > maxCx) maxCx = c1x; if (c2x > maxCx) maxCx = c2x; if (c3x > maxCx) maxCx = c3x;
+  let minCy = c0y; if (c1y < minCy) minCy = c1y; if (c2y < minCy) minCy = c2y; if (c3y < minCy) minCy = c3y;
+  let maxCy = c0y; if (c1y > maxCy) maxCy = c1y; if (c2y > maxCy) maxCy = c2y; if (c3y > maxCy) maxCy = c3y;
+  _sb[0] = Math.max(0, Math.floor(cx + minCx) - 1);
+  _sb[1] = Math.min(cw - 1, Math.ceil(cx + maxCx) + 1);
+  _sb[2] = Math.max(0, Math.floor(yCenter + minCy) - 1);
+  _sb[3] = Math.min(ch - 1, Math.ceil(yCenter + maxCy) + 1);
+}
+
+// Ultra-fast zero-allocation software rasterizer with 3D normals, projected 3D shadows, snow cap, and night emissive glow
+function rasterizeStackIntoScratch({
+  vol = state.vol,
+  angleDeg, squash, spacing, maxSlices, shadow, outline,
+  room = spacing,
+  cwOverride = 0, chOverride = 0, cxOverride = 0, baseYOverride = 0,
+  clearBg = false,
+  shearPerSlice = null,
+  leanX = 0,
+}) {
+  if (!vol) return null;
+  const n = Math.min(vol.n, Math.max(1, maxSlices || vol.n));
+  const { w, h, area, occ, rgb, rgb32, normX, normY, normZ, ao, emis, snowMask, bounds, lightPools } = vol;
+  const env = getLightingEnv(state.timeOfDay, state.sunAngle);
+
+  const diag = Math.ceil(Math.hypot(w, h)) + 6;
+  const liftMax = Math.ceil((vol.n - 1) * Math.max(room, 1));
+  const shadowPad = shadow ? Math.ceil(vol.n * 1.4) : 0;
+  const cw = cwOverride || (diag + 16 + shadowPad * 2);
+  const ch = chOverride || (Math.ceil(diag * squash) + liftMax + 20 + Math.ceil(shadowPad * squash));
+  const cx = cxOverride || (cw >> 1);
+  const baseY = baseYOverride || (ch - Math.ceil((diag * squash) / 2) - 8 - Math.ceil(shadowPad * squash * 0.45));
+
+  ensureScratch(cw, ch);
+  const out32 = scratch.out32;
+  const out8 = scratch.out8;
+  const alphaMask = scratch.alpha;
+  const emisMask = scratch.emis;
+  const shadowMask = scratch.shadow;
+
+  if (clearBg) {
+    out32.fill(packABGR(env.bgR, env.bgG, env.bgB, 255));
+  } else {
+    out32.fill(0);
+  }
+  alphaMask.fill(0);
+  emisMask.fill(0);
+
+  const rad = (angleDeg * Math.PI) / 180;
+  const ca = Math.cos(rad);
+  const sa = Math.sin(rad);
+  const invSquash = 1 / Math.max(squash, 0.1);
+
+  // Rotate world light vector into object-local space once per frame
+  const objLx = env.lx * ca + env.ly * sa;
+  const objLy = -env.lx * sa + env.ly * ca;
+  const objLz = env.lz;
+
+  // 1. True 3D projected cast shadow on ground plane
+  if (shadow) {
+    shadowMask.fill(0);
+    const shStep = n > 44 ? 2 : 1;
+    const invN = 1 / Math.max(1, n - 1);
+    for (let z = 0; z < n; z += shStep) {
+      const b = bounds[z];
+      if (b.empty) continue;
+      const zBase = z * area;
+      const sxOff = shearPerSlice ? shearPerSlice[z] : leanX * (z * invN);
+      const scx = cx + sxOff + z * spacing * env.shDx;
+      const scy = baseY + 1 + z * spacing * env.shDy * squash;
+      sliceScreenBounds(b, w, h, scx, scy, ca, sa, squash, cw, ch);
+      const xMin = _sb[0], xMax = _sb[1], yMin = _sb[2], yMax = _sb[3];
+      if (xMin > xMax || yMin > yMax) continue;
+
+      for (let y = yMin; y <= yMax; y++) {
+        const dy = (y - scy) * invSquash;
+        let sx = (xMin - scx) * ca + dy * sa + w * 0.5;
+        let sy = -(xMin - scx) * sa + dy * ca + h * 0.5;
+        let idx = y * cw + xMin;
+        for (let x = xMin; x <= xMax; x++, idx++, sx += ca, sy -= sa) {
+          if (shadowMask[idx]) continue;
+          const ix = sx | 0, iy = sy | 0;
+          if (sx >= 0 && sy >= 0 && ix < w && iy < h && occ[zBase + iy * w + ix]) {
+            shadowMask[idx] = 1;
+            out32[idx] = env.shPacked;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Ground emissive light pools at sunset / night (rendered under the stack)
+  if (state.lighting && env.emisGlow > 0.04 && lightPools.length > 0) {
+    const glow = env.emisGlow * 0.52;
+    const radPx = 10;
+    const radSq = radPx * radPx;
+    for (let i = 0; i < lightPools.length; i++) {
+      const lp = lightPools[i];
+      const gx = Math.round(cx + (lp.x * ca - lp.y * sa));
+      const gy = Math.round(baseY + (lp.x * sa + lp.y * ca) * squash);
+      const y0 = Math.max(0, gy - Math.ceil(radPx * squash));
+      const y1 = Math.min(ch - 1, gy + Math.ceil(radPx * squash));
+      const x0 = Math.max(0, gx - radPx);
+      const x1 = Math.min(cw - 1, gx + radPx);
+      for (let y = y0; y <= y1; y++) {
+        const dy = (y - gy) * invSquash;
+        const dy2 = dy * dy;
+        for (let x = x0; x <= x1; x++) {
+          const dx = x - gx;
+          const d2 = dx * dx + dy2;
+          if (d2 >= radSq) continue;
+          const f = d2 < radSq * 0.35 ? glow : glow * 0.45;
+          const p = (y * cw + x) * 4;
+          if (out8[p + 3] === 0) {
+            out8[p] = clampByte(env.bgR + lp.r * f);
+            out8[p + 1] = clampByte(env.bgG + lp.g * f);
+            out8[p + 2] = clampByte(env.bgB + lp.b * f);
+            out8[p + 3] = Math.round(Math.min(255, f * 260));
+          } else {
+            out8[p] = clampByte(out8[p] + lp.r * f);
+            out8[p + 1] = clampByte(out8[p + 1] + lp.g * f);
+            out8[p + 2] = clampByte(out8[p + 2] + lp.b * f);
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Slice stack rasterization (bottom to top, tight AABB + incremental scanlines + real-time Snow Cap)
+  const useLight = state.lighting;
+  const emisGlow = env.emisGlow;
+  const shR = env.shMulR, shG = env.shMulG, shB = env.shMulB;
+  const midR = env.midMulR, midG = env.midMulG, midB = env.midMulB;
+  const litR = env.litMulR, litG = env.litMulG, litB = env.litMulB;
+  const snowLevel = weather.snowCover * 4.2; // 0..4.2 compared against snowMask (1..4)
+  const hasSnow = snowLevel > 0.25;
+  const invN = 1 / Math.max(1, n - 1);
+
+  for (let z = 0; z < n; z++) {
+    const b = bounds[z];
+    if (b.empty) continue;
+    const zBase = z * area;
+    const lift = Math.round(z * spacing);
+    const sxOff = shearPerSlice ? shearPerSlice[z] : leanX * (z * invN);
+    const sliceCx = cx + sxOff;
+    const yCenter = baseY - lift;
+    sliceScreenBounds(b, w, h, sliceCx, yCenter, ca, sa, squash, cw, ch);
+    const xMin = _sb[0], xMax = _sb[1], yMin = _sb[2], yMax = _sb[3];
+    if (xMin > xMax || yMin > yMax) continue;
+
+    for (let y = yMin; y <= yMax; y++) {
+      const dy = (y - yCenter) * invSquash;
+      let sx = (xMin - sliceCx) * ca + dy * sa + w * 0.5;
+      let sy = -(xMin - sliceCx) * sa + dy * ca + h * 0.5;
+      let idx = y * cw + xMin;
+
+      for (let x = xMin; x <= xMax; x++, idx++, sx += ca, sy -= sa) {
+        if (sx < 0 || sy < 0) continue;
+        const ix = sx | 0, iy = sy | 0;
+        if (ix >= w || iy >= h) continue;
+        const vIdx = zBase + iy * w + ix;
+        if (!occ[vIdx]) continue;
+
+        alphaMask[idx] = 1;
+        const isSnow = hasSnow && snowMask[vIdx] > 0 && snowMask[vIdx] <= snowLevel;
+
+        if (!useLight) {
+          out32[idx] = isSnow ? 0xfff8f4ee : rgb32[vIdx];
+          continue;
+        }
+
+        if (emis[vIdx] && emisGlow > 0.05) {
+          emisMask[idx] = 1;
+          const p3 = vIdx * 3;
+          const boost = 1 + emisGlow * 0.42;
+          const r = clampByte(rgb[p3] * boost + emisGlow * 28);
+          const g = clampByte(rgb[p3 + 1] * boost + emisGlow * 24);
+          const bl = clampByte(rgb[p3 + 2] * boost + emisGlow * 18);
+          out32[idx] = (0xff000000 | (bl << 16) | (g << 8) | r);
+          continue;
+        }
+
+        const ndotl = normX[vIdx] * objLx + normY[vIdx] * objLy + normZ[vIdx] * objLz;
+        const occAO = ao[vIdx];
+        let mr, mg, mb;
+        if (ndotl > 0.36) {
+          mr = litR * occAO; mg = litG * occAO; mb = litB * occAO;
+        } else if (ndotl > -0.14) {
+          mr = midR * occAO; mg = midG * occAO; mb = midB * occAO;
+        } else {
+          mr = shR * occAO; mg = shG * occAO; mb = shB * occAO;
+        }
+        let br, bg, bb;
+        if (isSnow) {
+          br = 238; bg = 245; bb = 255;
+        } else {
+          const p3 = vIdx * 3;
+          br = rgb[p3]; bg = rgb[p3 + 1]; bb = rgb[p3 + 2];
+        }
+        const rr = (br * mr) | 0;
+        const gg = (bg * mg) | 0;
+        const bl = (bb * mb) | 0;
+        out32[idx] = (0xff000000 | ((bl > 255 ? 255 : bl) << 16) | ((gg > 255 ? 255 : gg) << 8) | (rr > 255 ? 255 : rr));
+      }
+    }
+  }
+
+  // 4. Crisp 1px outer pixel outline
+  if (outline) {
+    const olPacked = env.olPacked;
+    for (let y = 1; y < ch - 1; y++) {
+      let idx = y * cw + 1;
+      for (let x = 1; x < cw - 1; x++, idx++) {
+        if (alphaMask[idx]) continue;
+        if (alphaMask[idx - 1] || alphaMask[idx + 1] || alphaMask[idx - cw] || alphaMask[idx + cw]) {
+          out32[idx] = olPacked;
+        }
+      }
+    }
+  }
+
+  // 5. Crisp 1px emissive pixel bloom halo at sunset/night
+  if (useLight && emisGlow > 0.12) {
+    const haloA = emisGlow * 0.48;
+    for (let y = 1; y < ch - 1; y++) {
+      let idx = y * cw + 1;
+      for (let x = 1; x < cw - 1; x++, idx++) {
+        if (emisMask[idx]) continue;
+        let src = -1;
+        if (emisMask[idx - 1]) src = idx - 1;
+        else if (emisMask[idx + 1]) src = idx + 1;
+        else if (emisMask[idx - cw]) src = idx - cw;
+        else if (emisMask[idx + cw]) src = idx + cw;
+        if (src < 0) continue;
+        const sp = src * 4, dp = idx * 4;
+        if (out8[dp + 3] === 0) {
+          out8[dp] = out8[sp];
+          out8[dp + 1] = out8[sp + 1];
+          out8[dp + 2] = out8[sp + 2];
+          out8[dp + 3] = Math.round(haloA * 220);
+        } else {
+          out8[dp] = clampByte(out8[dp] + out8[sp] * haloA);
+          out8[dp + 1] = clampByte(out8[dp + 1] + out8[sp + 1] * haloA);
+          out8[dp + 2] = clampByte(out8[dp + 2] + out8[sp + 2] * haloA);
+        }
+      }
+    }
+  }
+
+  scratch.ctx.putImageData(scratch.imgData, 0, 0);
+  scratch.cx = cx;
+  scratch.baseY = baseY;
+  return scratch.canvas;
+}
+
+// ============================================================
+// PROCEDURAL VOXEL PROPS + SPRITE CACHE (Living Diorama Engine)
+// ============================================================
+function makeProceduralVolume(w, h, n, fillFn) {
+  const area = w * h;
+  const total = n * area;
+  const occ = new Uint8Array(total);
+  const rgb = new Uint8Array(total * 3);
+  const rgb32 = new Uint32Array(total);
+  const emis = new Uint8Array(total);
+  const bounds = new Array(n);
+
+  const put = (z, y, x, r, g, b, isEmis = 0) => {
+    if (z < 0 || z >= n || y < 0 || y >= h || x < 0 || x >= w) return;
+    const idx = z * area + y * w + x;
+    occ[idx] = 1;
+    rgb[idx * 3] = r; rgb[idx * 3 + 1] = g; rgb[idx * 3 + 2] = b;
+    rgb32[idx] = packABGR(r, g, b, 255);
+    if (isEmis) emis[idx] = 1;
+  };
+  fillFn(put, w, h, n);
+
+  for (let z = 0; z < n; z++) {
+    const base = z * area;
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (occ[base + y * w + x]) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    bounds[z] = maxX >= minX
+      ? { minX, maxX, minY, maxY, empty: false }
+      : { minX: 0, maxX: 0, minY: 0, maxY: 0, empty: true };
+  }
+  return buildVolumeFromPixels(w, h, n, occ, rgb, rgb32, bounds, { explicitEmis: emis, maxPools: 6 });
+}
+
+const PROCEDURAL_PROPS = {
+  // Hand-sculpted organic pine tree: roots, textured bark trunk, irregular hue-shifted boughs (deep teal shadow -> emerald mid -> warm lime tip)
+  pine: makeProceduralVolume(18, 18, 28, (put) => {
+    const cx = 8.5, cy = 8.5;
+    // Flared roots & gnarled bark trunk
+    for (let z = 0; z < 8; z++) {
+      const r = z === 0 ? 2.6 : (z === 1 ? 2.0 : 1.5);
+      for (let y = 5; y <= 12; y++) for (let x = 5; x <= 12; x++) {
+        const d = Math.hypot(x - cx, y - cy);
+        if (d <= r) {
+          const grain = ((x * 3 + y * 5 + z * 7) & 3) === 0;
+          put(z, y, x, grain ? 84 : 118, grain ? 52 : 76, grain ? 38 : 50);
+        }
+      }
+    }
+    // 5 irregular overlapping evergreen bough tiers with hue-shifted depth
+    const tiers = [
+      [5, 12, 7.6, 0.0],
+      [10, 17, 6.2, 0.7],
+      [15, 21, 4.8, 1.4],
+      [19, 25, 3.2, 2.1],
+      [23, 28, 1.8, 2.8],
+    ];
+    for (const [z0, z1, rMax, angOff] of tiers) {
+      for (let z = z0; z < z1; z++) {
+        const frac = (z - z0) / Math.max(1, z1 - z0);
+        const baseR = rMax * (1 - frac * 0.68);
+        for (let y = 0; y < 18; y++) for (let x = 0; x < 18; x++) {
+          const dx = x - cx, dy = y - cy;
+          const d = Math.hypot(dx, dy);
+          const ang = Math.atan2(dy, dx);
+          // 5-lobe organic branch tips
+          const lobe = 1 + 0.18 * Math.cos(ang * 5 + angOff);
+          if (d <= baseR * lobe) {
+            const isEdge = d > baseR * lobe - 1.3;
+            const isTopTip = frac > 0.55 || z >= 25;
+            const speckle = ((x * 11 + y * 7 + z * 5) & 3) === 0;
+            if (isTopTip && (isEdge || speckle)) {
+              put(z, y, x, 92, 178, 86); // warm sunlit needle tip
+            } else if (isEdge) {
+              put(z, y, x, 46, 134, 72); // rich emerald mid
+            } else {
+              put(z, y, x, 24, 84, 66);  // deep cool-teal inner shade
+            }
+          }
+        }
+      }
+    }
+  }),
+
+  // Curved gooseneck Tokyo/cyberpunk streetlamp: cast-iron pedestal, ribbed post, overhanging curved arm, warm amber glass lantern + cap
+  lamp: makeProceduralVolume(14, 14, 30, (put) => {
+    const px = 4, py = 7;
+    // Octagonal cast-iron base pedestal
+    for (let z = 0; z < 4; z++) {
+      const r = z < 2 ? 2.4 : 1.7;
+      for (let y = py - 2; y <= py + 2; y++) for (let x = px - 2; x <= px + 2; x++) {
+        if (Math.hypot(x - px, y - py) <= r) {
+          put(z, y, x, z === 2 ? 96 : 56, z === 2 ? 108 : 66, z === 2 ? 128 : 84);
+        }
+      }
+    }
+    // Slender fluted iron post with mid decorative collar
+    for (let z = 4; z < 23; z++) {
+      put(z, py, px, 68, 80, 100);
+      put(z, py, px + 1, 52, 62, 80);
+      if (z === 13) {
+        put(z, py - 1, px, 96, 112, 134);
+        put(z, py + 1, px, 96, 112, 134);
+      }
+    }
+    // Curved gooseneck overhanging arm reaching toward +X (over the street!)
+    put(23, py, px + 1, 78, 92, 114);
+    put(24, py, px + 2, 78, 92, 114);
+    put(25, py, px + 3, 86, 100, 122);
+    put(26, py, px + 4, 86, 100, 122);
+    put(26, py, px + 5, 86, 100, 122);
+    put(26, py, px + 6, 86, 100, 122);
+    put(25, py, px + 7, 74, 86, 108);
+    // Lantern hood + glowing warm amber glass globe + glowing bottom lens
+    const lx = px + 7, ly = py;
+    for (let y = ly - 2; y <= ly + 2; y++) for (let x = lx - 2; x <= lx + 2; x++) {
+      const d = Math.hypot(x - lx, y - ly);
+      if (d <= 2.2) put(24, y, x, 46, 54, 70); // dark metal shade hood
+      if (d <= 1.2) put(25, y, x, 64, 76, 94); // hood finial
+    }
+    for (let z = 21; z <= 23; z++) {
+      for (let y = ly - 1; y <= ly + 1; y++) for (let x = lx - 1; x <= lx + 1; x++) {
+        const isBrightCore = z === 22 && (x === lx || y === ly);
+        put(z, y, x, 255, isBrightCore ? 244 : 210, isBrightCore ? 170 : 108, 1);
+      }
+    }
+    put(20, ly, lx, 255, 224, 130, 1);
+  }),
+
+  // Detailed Japanese/Cyberpunk glowing neon vending machine: magenta neon header, colorful drink rows, glowing cyan keypad, dark chute, striped awning
+  kiosk: makeProceduralVolume(16, 12, 24, (put) => {
+    for (let z = 0; z < 21; z++) {
+      for (let y = 2; y <= 8; y++) for (let x = 2; x <= 13; x++) {
+        const isFront = y === 8;
+        const isSideTrim = (x === 2 || x === 13) || z === 0 || z === 20;
+        if (isFront && !isSideTrim) {
+          if (z >= 17 && z <= 19 && x >= 3 && x <= 12) {
+            // Hot pink / magenta neon header sign with bright white-pink glyph pixels
+            const glyph = (z === 18) && ((x === 4 || x === 5 || x === 7 || x === 9 || x === 11));
+            put(z, y, x, 255, glyph ? 210 : 72, glyph ? 240 : 178, 1);
+          } else if (z >= 8 && z <= 15 && x >= 3 && x <= 12) {
+            // Illuminated glass showcase with 3 shelves of colorful pixel drink cans!
+            if (z === 10 || z === 13) {
+              put(z, y, x, 200, 245, 255, 1); // glowing shelf divider
+            } else if ((x & 1) === 1) {
+              const palette = [
+                [255, 92, 92],   // red soda
+                [90, 240, 255],  // cyan Ramune
+                [255, 222, 88],  // lemon tea
+                [120, 255, 145], // melon soda
+                [255, 125, 220], // peach
+              ];
+              const c = palette[(x + z) % palette.length];
+              put(z, y, x, c[0], c[1], c[2], 1);
+            } else {
+              put(z, y, x, 135, 232, 255, 1); // cool fluorescent glass backing
+            }
+          } else if (z >= 5 && z <= 6 && x >= 10 && x <= 12) {
+            // Glowing cyan coin slot / button panel
+            put(z, y, x, 70, 242, 255, 1);
+          } else if (z >= 2 && z <= 4 && x >= 4 && x <= 9) {
+            // Recessed dark pickup chute
+            put(z, y, x, 18, 22, 34);
+          } else {
+            put(z, y, x, 54, 66, 92);
+          }
+        } else {
+          // Metallic housing with subtle horizontal panel ribs & neon side accent strip
+          if ((x === 2 || x === 13) && y === 7 && z >= 8 && z <= 19) {
+            put(z, y, x, 64, 224, 255, 1); // cyan side edge-glow
+          } else {
+            const rib = (z === 6 || z === 14) ? -10 : 0;
+            put(z, y, x, 46 + rib, 58 + rib, 82 + rib);
+          }
+        }
+      }
+    }
+    // Sloped corrugated awning canopy overhanging the front
+    for (let x = 1; x <= 14; x++) {
+      const stripe = (x & 1) === 0;
+      const ar = stripe ? 225 : 240, ag = stripe ? 62 : 244, ab = stripe ? 112 : 252;
+      for (let y = 1; y <= 9; y++) put(21, y, x, 68, 82, 108);
+      for (let y = 8; y <= 10; y++) put(22 - (y - 8), y, x, ar, ag, ab);
+    }
+  }),
+
+  // Street bollard with steel dome top and glowing amber reflective safety band
+  bollard: makeProceduralVolume(8, 8, 11, (put) => {
+    for (let z = 0; z < 10; z++) {
+      const r = z === 0 ? 2.4 : (z === 9 ? 1.2 : 1.7);
+      for (let y = 1; y <= 6; y++) for (let x = 1; x <= 6; x++) {
+        if (Math.hypot(x - 3.5, y - 3.5) <= r) {
+          if (z === 6 || z === 7) put(z, y, x, 255, 152, 46, 1);
+          else if (z === 9) put(z, y, x, 130, 146, 170);
+          else put(z, y, x, 54, 64, 82);
+        }
+      }
+    }
+  }),
+
+  // Sculpted faceted mossy boulder with lush green moss cap and tiny colorful wildflowers
+  rock: makeProceduralVolume(14, 14, 10, (put) => {
+    for (let z = 0; z < 10; z++) {
+      const rx = 5.4 - z * 0.52;
+      const ry = 4.6 - z * 0.44;
+      for (let y = 1; y < 13; y++) for (let x = 1; x < 13; x++) {
+        const dx = (x - 6.4) / Math.max(0.5, rx);
+        const dy = (y - 6.6) / Math.max(0.5, ry);
+        const warp = 0.14 * Math.sin(x * 0.9 + y * 0.6);
+        if (dx * dx + dy * dy + warp <= 1.0) {
+          const isMoss = z >= 5 && (x + y * 2) % 3 !== 0;
+          const isFlower = z === 7 && ((x === 5 && y === 6) || (x === 8 && y === 7));
+          if (isFlower) {
+            put(z, y, x, x === 5 ? 255 : 255, x === 5 ? 228 : 138, x === 5 ? 92 : 190);
+          } else if (isMoss) {
+            const hi = ((x + y) & 1) ? 18 : 0;
+            put(z, y, x, 72 + hi, 154 + hi, 74 + hi);
+          } else {
+            const shade = z * 6 + (((x ^ y) & 1) ? 8 : 0);
+            put(z, y, x, 108 + shade, 116 + shade, 130 + shade);
+          }
+        }
+      }
+    }
+  }),
+
+  // Cozy warm wooden trail lantern post for Meadow Island
+  meadowLamp: makeProceduralVolume(11, 11, 24, (put) => {
+    const px = 5, py = 5;
+    // Stone base
+    for (let z = 0; z < 3; z++) for (let y = 4; y <= 6; y++) for (let x = 4; x <= 6; x++) put(z, y, x, 120, 126, 138);
+    // Warm cedar wood post
+    for (let z = 3; z < 19; z++) put(z, py, px, 136, 88, 54);
+    // Cross-arm + hanging glowing warm lantern
+    for (let x = px; x <= px + 3; x++) put(18, py, x, 118, 74, 44);
+    put(19, py, px, 118, 74, 44);
+    put(17, py, px + 3, 62, 68, 78);
+    for (let z = 14; z <= 16; z++) {
+      for (let y = py - 1; y <= py + 1; y++) for (let x = px + 2; x <= px + 4; x++) {
+        const core = (z === 15) || (x === px + 3 && y === py);
+        put(z, y, x, 255, core ? 236 : 196, core ? 148 : 88, 1);
+      }
+    }
+    put(13, py, px + 3, 56, 60, 72);
+  }),
+};
+
+// Cache rasterized prop sprites so repeated props (e.g. 4 trees, 4 lamps) rasterize ONCE per angle/light bucket
+function getCachedPropSprite(propKey, vol, angleDeg, squash, spacing) {
+  const qAng = Math.round((((angleDeg % 360) + 360) % 360) / 2) * 2;
+  const qSq = Math.round(squash * 50);
+  const qSp = Math.round(spacing * 10);
+  const qSnow = Math.round(weather.snowCover * 4);
+  const key = `${propKey}|${qAng}|${qSq}|${qSp}|${state.timeOfDay}|${Math.round(state.sunAngle / 3)}|${state.lighting ? 1 : 0}|${state.shadow ? 1 : 0}|${state.outline ? 1 : 0}|${qSnow}`;
+  const hit = propCache.get(key);
+  if (hit) return hit;
+
+  const buf = rasterizeStackIntoScratch({
+    vol,
+    angleDeg: qAng,
+    squash,
+    spacing,
+    maxSlices: vol.n,
+    shadow: state.shadow,
+    outline: state.outline,
+  });
+  const copy = document.createElement("canvas");
+  copy.width = buf.width;
+  copy.height = buf.height;
+  copy.getContext("2d").drawImage(buf, 0, 0);
+  const entry = { canvas: copy, cx: scratch.cx, baseY: scratch.baseY };
+
+  if (propCache.size >= PROP_CACHE_MAX) {
+    const oldest = propCache.keys().next().value;
+    propCache.delete(oldest);
+  }
+  propCache.set(key, entry);
+  return entry;
+}
+
+// ============================================================
+// WEATHER ENGINE: RAIN, WET REFLECTIONS & SNOW CAP
+// ============================================================
+function updateWeather(dt) {
+  weather.time += dt;
+  const targetSnow = state.weather === "snow" ? 1 : 0;
+  const targetWet = state.weather === "rain" ? 1 : 0;
+  weather.snowCover += (targetSnow - weather.snowCover) * Math.min(1, dt * (targetSnow > weather.snowCover ? 0.42 : 1.8));
+  weather.wetness += (targetWet - weather.wetness) * Math.min(1, dt * 2.5);
+  if (Math.abs(targetSnow - weather.snowCover) < 0.005) weather.snowCover = targetSnow;
+  if (Math.abs(targetWet - weather.wetness) < 0.005) weather.wetness = targetWet;
+
+  if (state.weather === "rain") {
+    for (let i = 0; i < RAIN_COUNT; i++) {
+      const b = i * 4;
+      weather.rain[b] -= weather.rain[b + 2] * 0.22 * dt;
+      weather.rain[b + 1] += weather.rain[b + 2] * dt;
+      if (weather.rain[b + 1] > 1.05) {
+        weather.rain[b + 1] -= 1.1;
+        weather.rain[b] = Math.random();
+      }
+      if (weather.rain[b] < -0.05) weather.rain[b] += 1.1;
+    }
+    for (let i = 0; i < RIPPLE_COUNT; i++) {
+      const b = i * 4;
+      weather.ripples[b + 2] += dt * 1.35;
+      if (weather.ripples[b + 2] >= 1) {
+        weather.ripples[b] = Math.random();
+        weather.ripples[b + 1] = 0.28 + Math.random() * 0.68;
+        weather.ripples[b + 2] = 0;
+        weather.ripples[b + 3] = 4 + Math.floor(Math.random() * 4);
+      }
+    }
+  } else if (state.weather === "snow") {
+    for (let i = 0; i < SNOW_COUNT; i++) {
+      const b = i * 4;
+      weather.snow[b] += Math.sin(weather.time * 1.4 + weather.snow[b + 3]) * 0.045 * dt;
+      weather.snow[b + 1] += weather.snow[b + 2] * dt;
+      if (weather.snow[b + 1] > 1.04) {
+        weather.snow[b + 1] -= 1.08;
+        weather.snow[b] = Math.random();
+      }
+      if (weather.snow[b] < 0) weather.snow[b] += 1;
+      if (weather.snow[b] > 1) weather.snow[b] -= 1;
+    }
+  }
+}
+
+// Draw crisp wavy upside-down wet reflection of a rasterized sprite canvas
+function drawWetReflection(targetCtx, srcCanvas, dstX, dstY, s, baseY, alpha) {
+  if (alpha <= 0.02) return;
+  const sw = srcCanvas.width;
+  const reflH = Math.min(srcCanvas.height - 2, Math.max(8, Math.round(baseY * 0.92)));
+  if (reflH <= 0) return;
+
+  targetCtx.save();
+  targetCtx.imageSmoothingEnabled = false;
+  targetCtx.globalAlpha = alpha;
+  const phase = weather.time * 5.2;
+  // Draw in 2-art-pixel horizontal strips with subtle sine ripple
+  for (let row = 0; row < reflH; row += 2) {
+    const srcY = baseY - row - 2;
+    if (srcY < 0 || srcY + 2 > srcCanvas.height) continue;
+    const wave = Math.round(Math.sin(row * 0.42 + phase) * (0.6 + row * 0.03));
+    const fade = 1 - row / reflH;
+    targetCtx.globalAlpha = alpha * fade;
+    targetCtx.drawImage(
+      srcCanvas,
+      0, srcY, sw, 2,
+      dstX + wave * s, dstY + (baseY + Math.round(row * 0.72)) * s, sw * s, 2 * s
+    );
+  }
+  targetCtx.restore();
+}
+
+function drawWeatherGroundEffects(targetCtx, aw, ah, s, env) {
+  if (state.weather !== "rain") return;
+  targetCtx.fillStyle = env.nightW > 0.45 ? "rgba(130, 185, 255, 0.34)" : "rgba(100, 130, 170, 0.28)";
+  for (let i = 0; i < RIPPLE_COUNT; i++) {
+    const b = i * 4;
+    const age = weather.ripples[b + 2];
+    const rx = Math.round(weather.ripples[b] * aw);
+    const ry = Math.round(weather.ripples[b + 1] * ah);
+    const r = Math.max(1, Math.round(age * weather.ripples[b + 3]));
+    const rh = Math.max(1, Math.round(r * state.squash * 0.65));
+    // Crisp pixel diamond/ring ripple
+    targetCtx.fillRect((rx - r) * s, ry * s, s, s);
+    targetCtx.fillRect((rx + r) * s, ry * s, s, s);
+    targetCtx.fillRect(rx * s, (ry - rh) * s, s, s);
+    targetCtx.fillRect(rx * s, (ry + rh) * s, s, s);
+  }
+}
+
+function drawWeatherOverlay(targetCtx, aw, ah, s, env) {
+  if (state.weather === "rain") {
+    targetCtx.fillStyle = env.nightW > 0.45 ? "rgba(160, 210, 255, 0.45)" : "rgba(120, 150, 195, 0.42)";
+    for (let i = 0; i < RAIN_COUNT; i++) {
+      const b = i * 4;
+      const rx = Math.round(weather.rain[b] * aw);
+      const ry = Math.round(weather.rain[b + 1] * ah);
+      const len = weather.rain[b + 3] | 0;
+      for (let k = 0; k < len; k++) {
+        targetCtx.fillRect((rx - (k >> 1)) * s, (ry + k) * s, s, s);
+      }
+    }
+  } else if (state.weather === "snow") {
+    targetCtx.fillStyle = env.nightW > 0.45 ? "rgba(225, 240, 255, 0.85)" : "rgba(255, 255, 255, 0.92)";
+    for (let i = 0; i < SNOW_COUNT; i++) {
+      const b = i * 4;
+      const sx = Math.round(weather.snow[b] * aw);
+      const sy = Math.round(weather.snow[b + 1] * ah);
+      const sz = (i & 3) === 0 ? 2 : 1;
+      targetCtx.fillRect(sx * s, sy * s, sz * s, sz * s);
+    }
+  }
+}
+
+// ============================================================
+// LIVING DIORAMA + MULTI-ASSET WORLD RENDERER
+// ============================================================
+function getSceneLayout(sceneName) {
+  if (sceneName === "street") {
+    return [
+      { key: "lamp", vol: PROCEDURAL_PROPS.lamp, x: -34, y: -27, rot: 90 },
+      { key: "lamp", vol: PROCEDURAL_PROPS.lamp, x: 34, y: -27, rot: 90 },
+      { key: "kiosk", vol: PROCEDURAL_PROPS.kiosk, x: 2, y: -32, rot: 0 },
+      { key: "bollard", vol: PROCEDURAL_PROPS.bollard, x: -36, y: 24, rot: 0 },
+      { key: "bollard", vol: PROCEDURAL_PROPS.bollard, x: 36, y: 24, rot: 0 },
+      { key: "lamp", vol: PROCEDURAL_PROPS.lamp, x: 0, y: 31, rot: 270 },
+    ];
+  }
+  // Meadow Island
+  return [
+    { key: "pine", vol: PROCEDURAL_PROPS.pine, x: -32, y: -24, rot: 0 },
+    { key: "pine", vol: PROCEDURAL_PROPS.pine, x: 30, y: -25, rot: 90 },
+    { key: "pine", vol: PROCEDURAL_PROPS.pine, x: -26, y: 26, rot: 180 },
+    { key: "rock", vol: PROCEDURAL_PROPS.rock, x: 28, y: 22, rot: 45 },
+    { key: "meadowLamp", vol: PROCEDURAL_PROPS.meadowLamp, x: 18, y: -15, rot: 120 },
+  ];
+}
+
+// Cached 112x112 pixel-art diorama ground texture (rebuilt only when scene/lighting/weather changes -> <0.1ms/frame draw!)
+const groundTex = { key: "", canvas: document.createElement("canvas"), ctx: null };
+groundTex.canvas.width = 112;
+groundTex.canvas.height = 112;
+groundTex.ctx = groundTex.canvas.getContext("2d");
+
+function getDioramaGroundTex(sceneName, env) {
+  const qSnow = Math.round(weather.snowCover * 4);
+  const qWet = Math.round(weather.wetness * 3);
+  const key = `${sceneName}|${state.timeOfDay}|${qSnow}|${qWet}`;
+  if (groundTex.key === key) return groundTex.canvas;
+  groundTex.key = key;
+
+  const W = 112, H = 112, half = 56;
+  const img = groundTex.ctx.createImageData(W, H);
+  const d32 = new Uint32Array(img.data.buffer);
+  const wet = weather.wetness;
+  const snow = weather.snowCover;
+  const nW = env.nightW;
+  const sW = env.sunsetW;
+
+  const hash = (x, y) => {
+    let h = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) & 255;
+  };
+
+  for (let py = 0; py < H; py++) {
+    const wy = py - half;
+    for (let px = 0; px < W; px++) {
+      const wx = px - half;
+      const n = hash(px, py);
+      let r, g, b;
+
+      if (sceneName === "street") {
+        const isSidewalk = wy < -20 || wy >= 20;
+        const isCurb = wy === -20 || wy === -21 || wy === 20 || wy === 21;
+        if (isCurb) {
+          // Crisp beveled concrete curb edge
+          const hi = (wy === -21 || wy === 20) ? 24 : -14;
+          r = lerp(lerp(154, 148, sW), 58, nW) + hi;
+          g = lerp(lerp(164, 140, sW), 70, nW) + hi;
+          b = lerp(lerp(178, 148, sW), 96, nW) + hi;
+        } else if (isSidewalk) {
+          // Tiled concrete paving slabs with dark mortar grid
+          const isSeam = ((px & 7) === 0) || ((py & 7) === 0);
+          const grain = (n & 7) - 3;
+          const tileVar = (((px >> 3) + (py >> 3)) & 1) ? 5 : -4;
+          const delta = isSeam ? -24 : (grain + tileVar);
+          r = lerp(lerp(142, 138, sW), 44, nW) + delta;
+          g = lerp(lerp(152, 130, sW), 54, nW) + delta;
+          b = lerp(lerp(166, 138, sW), 78, nW) + delta;
+        } else {
+          // Textured asphalt road + zebra crosswalk + dashed center line + manhole cover
+          const grain = (n & 15) - 7;
+          r = lerp(lerp(58, 54, sW), 20, nW) + grain * 0.7;
+          g = lerp(lerp(66, 52, sW), 26, nW) + grain * 0.7;
+          b = lerp(lerp(80, 64, sW), 42, nW) + grain * 0.7;
+
+          // Zebra crosswalk near x = -46..-34
+          if (wx >= -46 && wx <= -34 && (Math.abs(wy) % 6) < 3 && Math.abs(wy) < 18) {
+            r = lerp(lerp(222, 228, sW), 116, nW);
+            g = lerp(lerp(226, 206, sW), 126, nW);
+            b = lerp(lerp(232, 192, sW), 148, nW);
+          }
+          // Yellow-gold dashed center lane markers
+          if (wy >= -1 && wy <= 1 && wx > -28 && (((wx + 60) % 18) < 9)) {
+            r = lerp(lerp(245, 250, sW), 210, nW);
+            g = lerp(lerp(205, 185, sW), 165, nW);
+            b = lerp(lerp(75, 70, sW), 72, nW);
+          }
+          // Cast-iron manhole cover at (22, 8)
+          const md = Math.hypot(wx - 22, wy - 8);
+          if (md < 4.5) {
+            const rim = md > 3.2 || ((px + py) & 1) === 0;
+            r = lerp(rim ? 78 : 54, rim ? 38 : 26, nW);
+            g = lerp(rim ? 86 : 60, rim ? 46 : 32, nW);
+            b = lerp(rim ? 98 : 72, rim ? 64 : 46, nW);
+          }
+          // Wet asphalt sheen & puddle darken in rain
+          if (wet > 0) {
+            const puddle = (Math.sin(wx * 0.14) * Math.cos(wy * 0.19) > 0.35);
+            const f = puddle ? (1 - wet * 0.38) : (1 - wet * 0.2);
+            r *= f; g *= f; b *= (puddle ? (1 - wet * 0.1) : f);
+          }
+        }
+        if (snow > 0) {
+          const snAmt = isSidewalk ? snow * 0.92 : snow * 0.55;
+          const snR = lerp(234, 132, nW), snG = lerp(242, 152, nW), snB = lerp(255, 196, nW);
+          r = lerp(r, snR, snAmt); g = lerp(g, snG, snAmt); b = lerp(b, snB, snAmt);
+        }
+      } else {
+        // Meadow Island: winding pebbled dirt trail, dappled multi-tone pixel grass, tiny colorful wildflowers
+        const pathCenter = Math.sin(wx * 0.055) * 6;
+        const distPath = Math.abs(wy - pathCenter);
+        const edgeNoise = ((n & 7) - 3) * 0.45;
+        if (distPath < 10.5 + edgeNoise) {
+          // Warm pebbled dirt path with occasional stone pebbles
+          const isPebble = n > 236;
+          const grain = (n & 15) - 7;
+          if (isPebble) {
+            r = lerp(164, 72, nW); g = lerp(158, 76, nW); b = lerp(150, 92, nW);
+          } else {
+            r = lerp(lerp(194, 198, sW), 74, nW) + grain;
+            g = lerp(lerp(160, 144, sW), 62, nW) + grain;
+            b = lerp(lerp(116, 98, sW), 56, nW) + grain * 0.8;
+          }
+        } else {
+          // Rich dappled grass with blade tufts & wildflowers
+          const tuft = (n & 31) < 5 ? 14 : ((n & 31) > 27 ? -16 : 0);
+          r = lerp(lerp(88, 114, sW), 26, nW) + tuft * 0.7;
+          g = lerp(lerp(158, 126, sW), 62, nW) + tuft;
+          b = lerp(lerp(76, 66, sW), 52, nW) + tuft * 0.5;
+          // Scattered pixel wildflowers (yellow, pink, white)
+          if (n === 17 || n === 113) { r = lerp(255, 175, nW); g = lerp(228, 165, nW); b = lerp(96, 110, nW); }
+          else if (n === 71) { r = lerp(255, 165, nW); g = lerp(138, 96, nW); b = lerp(186, 140, nW); }
+          else if (n === 203) { r = lerp(248, 170, nW); g = lerp(250, 185, nW); b = lerp(255, 215, nW); }
+        }
+        if (snow > 0) {
+          const snAmt = snow * (distPath < 11 ? 0.75 : 0.92);
+          const snR = lerp(236, 136, nW), snG = lerp(244, 156, nW), snB = lerp(255, 200, nW);
+          r = lerp(r, snR, snAmt); g = lerp(g, snG, snAmt); b = lerp(b, snB, snAmt);
+        }
+      }
+
+      // Crisp 1px border edge rim on the floating diorama top
+      if (px === 0 || px === W - 1 || py === 0 || py === H - 1) {
+        r *= 0.68; g *= 0.68; b *= 0.68;
+      }
+      d32[py * W + px] = packABGR(clampByte(r), clampByte(g), clampByte(b), 255);
+    }
+  }
+  groundTex.ctx.putImageData(img, 0, 0);
+  return groundTex.canvas;
+}
+
+function drawDioramaGround(targetCtx, aw, ah, cx, cy, s, ca, sa, squash, env, sceneName) {
+  const half = 56;
+  const nW = env.nightW;
+  const snow = weather.snowCover;
+  const proj = (wx, wy, z = 0) => [
+    Math.round(cx + (wx * ca - wy * sa)) * s,
+    Math.round(cy + (wx * sa + wy * ca) * squash - z) * s,
+  ];
+
+  // 1. Multi-layer floating diorama plinth side walls (top turf/curb lip + thick rock/soil slab)
+  const corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+  const topPts = corners.map(([x, y]) => proj(x, y, 0));
+  const lipPts = corners.map(([x, y]) => proj(x, y, -3));
+  const botPts = corners.map(([x, y]) => proj(x, y, -11));
+
+  const lipColA = sceneName === "street"
+    ? (nW > 0.45 ? "#2e3a56" : "#94a3b8")
+    : (snow > 0.5 ? (nW > 0.45 ? "#92aacf" : "#dce8f8") : (nW > 0.45 ? "#24543d" : "#5ea84f"));
+  const lipColB = sceneName === "street"
+    ? (nW > 0.45 ? "#222b42" : "#77889e")
+    : (snow > 0.5 ? (nW > 0.45 ? "#7a92b8" : "#c6d6ea") : (nW > 0.45 ? "#1a3f30" : "#498a3f"));
+  const sideColA = sceneName === "street"
+    ? (nW > 0.45 ? "#1b2234" : "#64748b")
+    : (nW > 0.45 ? "#382a24" : "#946846");
+  const sideColB = sceneName === "street"
+    ? (nW > 0.45 ? "#121726" : "#475569")
+    : (nW > 0.45 ? "#261c18" : "#734e34");
+
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) & 3;
+    if ((topPts[i][1] + topPts[j][1]) * 0.5 > cy * s) {
+      // Lower soil / concrete foundation
+      targetCtx.fillStyle = (i & 1) ? sideColA : sideColB;
+      targetCtx.beginPath();
+      targetCtx.moveTo(lipPts[i][0], lipPts[i][1]);
+      targetCtx.lineTo(lipPts[j][0], lipPts[j][1]);
+      targetCtx.lineTo(botPts[j][0], botPts[j][1]);
+      targetCtx.lineTo(botPts[i][0], botPts[i][1]);
+      targetCtx.closePath();
+      targetCtx.fill();
+      // Upper grass / curb overhanging lip
+      targetCtx.fillStyle = (i & 1) ? lipColA : lipColB;
+      targetCtx.beginPath();
+      targetCtx.moveTo(topPts[i][0], topPts[i][1]);
+      targetCtx.lineTo(topPts[j][0], topPts[j][1]);
+      targetCtx.lineTo(lipPts[j][0], lipPts[j][1]);
+      targetCtx.lineTo(lipPts[i][0], lipPts[i][1]);
+      targetCtx.closePath();
+      targetCtx.fill();
+    }
+  }
+
+  // 2. Blit cached 112x112 pixel-art ground texture rotated & squashed in one nearest-neighbor drawImage!
+  const tex = getDioramaGroundTex(sceneName, env);
+  targetCtx.save();
+  targetCtx.imageSmoothingEnabled = false;
+  targetCtx.translate(cx * s, cy * s);
+  targetCtx.scale(s, s * squash);
+  targetCtx.rotate(Math.atan2(sa, ca));
+  targetCtx.drawImage(tex, -half, -half, half * 2, half * 2);
+  targetCtx.restore();
+}
+
+function drawSceneFrame() {
+  const rect = stage.getBoundingClientRect();
+  const s = Math.max(2, Math.min(7, state.scale));
+  const aw = Math.max(150, Math.min(300, Math.floor(rect.width / s)));
+  const ah = Math.max(115, Math.min(220, Math.floor(rect.height / s)));
+  const cw = aw * s, ch = ah * s;
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw;
+    canvas.height = ch;
+  }
+
+  const env = getLightingEnv(state.timeOfDay, state.sunAngle);
+  const cx = aw >> 1;
+  const cy = Math.round(ah * 0.57);
+  const rad = (state.angle * Math.PI) / 180;
+  const ca = Math.cos(rad), sa = Math.sin(rad);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = env.bgHex;
+  ctx.fillRect(0, 0, cw, ch);
+
+  // 1. Draw diorama plinth & ground
+  drawDioramaGround(ctx, aw, ah, cx, cy, s, ca, sa, state.squash, env, state.scene);
+
+  // 2. Ground rain ripples
+  drawWeatherGroundEffects(ctx, aw, ah, s, env);
+
+  // 3. Gather hero + procedural props + user-dropped extra props, then Y-sort by rotated screen depth!
+  const items = [];
+  items.push({ kind: "hero", x: 0, y: 0, rot: 0, vol: state.vol, key: "hero" });
+  const layout = getSceneLayout(state.scene);
+  for (let i = 0; i < layout.length; i++) {
+    const p = layout[i];
+    items.push({ kind: "prop", x: p.x, y: p.y, rot: p.rot, vol: p.vol, key: p.key });
+  }
+  for (let i = 0; i < state.userProps.length; i++) {
+    const up = state.userProps[i];
+    items.push({ kind: "prop", x: up.x, y: up.y, rot: up.rot, vol: up.vol, key: `u${i}_${up.name}` });
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    it.sx = cx + (it.x * ca - it.y * sa);
+    it.sy = cy + (it.x * sa + it.y * ca) * state.squash;
+  }
+  items.sort((a, b) => a.sy - b.sy);
+
+  // 4. Draw wet reflections + stacked sprites back-to-front
+  const reflAlpha = weather.wetness * (state.scene === "street" ? (env.nightW > 0.45 ? 0.52 : 0.36) : 0.24);
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    let imgCanvas, icx, ibaseY;
+    if (it.kind === "hero") {
+      imgCanvas = rasterizeStackIntoScratch({
+        vol: state.vol,
+        angleDeg: state.angle,
+        squash: state.squash,
+        spacing: state.spacing,
+        maxSlices: state.slices,
+        shadow: state.shadow,
+        outline: state.outline,
+      });
+      icx = scratch.cx;
+      ibaseY = scratch.baseY;
+    } else {
+      const cached = getCachedPropSprite(it.key, it.vol, state.angle + it.rot, state.squash, state.spacing);
+      imgCanvas = cached.canvas;
+      icx = cached.cx;
+      ibaseY = cached.baseY;
+    }
+    const ox = Math.round(it.sx - icx) * s;
+    const oy = Math.round(it.sy - ibaseY) * s;
+    if (reflAlpha > 0.02) {
+      drawWetReflection(ctx, imgCanvas, ox, oy, s, ibaseY, reflAlpha);
+    }
+    ctx.drawImage(imgCanvas, ox, oy, imgCanvas.width * s, imgCanvas.height * s);
+  }
+
+  // 5. Weather foreground streaks / snowflakes
+  drawWeatherOverlay(ctx, aw, ah, s, env);
+
+  const label = state.scene === "street" ? "Neon Street" : "Meadow Island";
+  const extra = state.userProps.length ? ` · +${state.userProps.length} prop${state.userProps.length > 1 ? "s" : ""}` : "";
+  readout.textContent = `${label}${extra} · ${Math.round(((state.angle % 360) + 360) % 360)}° · ${state.lastRenderMs.toFixed(1)}ms`;
+}
+
+// ============================================================
+// TOY MODE: DRIVE (Infinite scrolling pixel arena + physics)
+// ============================================================
+function updateDrive(dt) {
+  const maxSpeed = 78;
+  const accel = 135;
+  const brakeForce = 185;
+  const throttle = (keys.up ? 1 : 0) - (keys.down ? 1 : 0);
+  const steerIn = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+
+  const fx = Math.cos(drive.heading);
+  const fy = Math.sin(drive.heading);
+  const rx = -fy;
+  const ry = fx;
+
+  let fwd = drive.vx * fx + drive.vy * fy;
+  let lat = drive.vx * rx + drive.vy * ry;
+
+  if (throttle !== 0) {
+    fwd += throttle * (Math.sign(throttle) !== Math.sign(fwd) && Math.abs(fwd) > 4 ? brakeForce : accel) * dt;
+  } else {
+    fwd *= Math.exp(-2.8 * dt);
+  }
+  fwd = Math.max(-maxSpeed * 0.48, Math.min(maxSpeed, fwd));
+
+  const speedNorm = Math.min(1, Math.abs(fwd) / 36);
+  const turnRate = (keys.brake ? 4.3 : 3.2) * (fwd >= -2 ? 1 : -1);
+  drive.heading += steerIn * turnRate * speedNorm * dt;
+
+  // Lateral grip: low grip when drifting (Space) -> juicy power slides!
+  const grip = keys.brake ? 2.1 : 8.5;
+  lat *= Math.exp(-grip * dt);
+
+  const nfx = Math.cos(drive.heading);
+  const nfy = Math.sin(drive.heading);
+  const nrx = -nfy;
+  const nry = nfx;
+  drive.vx = nfx * fwd + nrx * lat;
+  drive.vy = nfy * fwd + nry * lat;
+  drive.x += drive.vx * dt;
+  drive.y += drive.vy * dt;
+  drive.speed = Math.hypot(drive.vx, drive.vy);
+  drive.drifting = (keys.brake && Math.abs(fwd) > 16) || Math.abs(lat) > 14;
+
+  // Suspension bounce & body roll/lean into turns
+  const targetLean = -steerIn * speedNorm * (keys.brake ? 2.8 : 1.6);
+  drive.lean += (targetLean - drive.lean) * Math.min(1, dt * 12);
+  if (Math.abs(throttle) > 0 && Math.abs(fwd) < 25) drive.bounceVel += 0.9 * dt;
+  drive.bounceVel += (-drive.bounce * 38 - drive.bounceVel * 7) * dt;
+  drive.bounce += drive.bounceVel * dt;
+
+  // Emit tire skid marks when drifting
+  if (drive.drifting) {
+    const offSide = 5;
+    for (const sgn of [-1, 1]) {
+      const i = drive.skidHead * 3;
+      drive.skids[i] = drive.x - nfx * 6 + nrx * offSide * sgn;
+      drive.skids[i + 1] = drive.y - nfy * 6 + nry * offSide * sgn;
+      drive.skids[i + 2] = 1.0;
+      drive.skidHead = (drive.skidHead + 1) % 240;
+    }
+  }
+  for (let i = 0; i < 240; i++) {
+    if (drive.skids[i * 3 + 2] > 0) drive.skids[i * 3 + 2] = Math.max(0, drive.skids[i * 3 + 2] - dt * 0.25);
+  }
+
+  // Emit exhaust / drift smoke puffs
+  drive.puffTimer -= dt;
+  if ((drive.speed > 10 || drive.drifting) && drive.puffTimer <= 0) {
+    drive.puffTimer = drive.drifting ? 0.035 : 0.09;
+    const i = drive.puffHead * 6;
+    drive.puffs[i] = drive.x - nfx * 9 + (Math.random() - 0.5) * 3;
+    drive.puffs[i + 1] = drive.y - nfy * 9 + (Math.random() - 0.5) * 3;
+    drive.puffs[i + 2] = 2 + Math.random() * 2;
+    drive.puffs[i + 3] = -nfx * 6 + (Math.random() - 0.5) * 8;
+    drive.puffs[i + 4] = -nfy * 6 + (Math.random() - 0.5) * 8;
+    drive.puffs[i + 5] = 1.0;
+    drive.puffHead = (drive.puffHead + 1) % 96;
+  }
+  for (let i = 0; i < 96; i++) {
+    const base = i * 6;
+    if (drive.puffs[base + 5] > 0) {
+      drive.puffs[base] += drive.puffs[base + 3] * dt;
+      drive.puffs[base + 1] += drive.puffs[base + 4] * dt;
+      drive.puffs[base + 2] += 10 * dt;
+      drive.puffs[base + 5] = Math.max(0, drive.puffs[base + 5] - dt * 1.45);
+    }
+  }
+
+  // Sync angle slider to vehicle heading (+90° aligns top-down nose with +X heading)
+  state.angle = (((drive.heading * 180) / Math.PI - 90) % 360 + 360) % 360;
+}
+
+function drawDriveFrame() {
+  const rect = stage.getBoundingClientRect();
+  const s = Math.max(2, Math.min(8, state.scale));
+  const aw = Math.max(120, Math.min(280, Math.floor(rect.width / s)));
+  const ah = Math.max(90, Math.min(200, Math.floor(rect.height / s)));
+  const cw = aw * s, ch = ah * s;
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw;
+    canvas.height = ch;
+  }
+
+  const env = getLightingEnv(state.timeOfDay, state.sunAngle);
+  const cx = aw >> 1;
+  const cy = (ah >> 1) + 10;
+  const world = state.driveWorld;
+  const snow = weather.snowCover;
+  const wet = weather.wetness;
+
+  ctx.imageSmoothingEnabled = false;
+  // Ground fill adapted to Drive World, Time of Day, Rain wetness & Snow
+  if (world === "street") {
+    let r = lerp(lerp(66, 58, env.sunsetW), 22, env.nightW);
+    let g = lerp(lerp(74, 56, env.sunsetW), 28, env.nightW);
+    let b = lerp(lerp(88, 68, env.sunsetW), 44, env.nightW);
+    if (wet > 0) { r *= (1 - wet * 0.28); g *= (1 - wet * 0.24); b *= (1 - wet * 0.14); }
+    if (snow > 0) { r = lerp(r, lerp(230, 120, env.nightW), snow * 0.65); g = lerp(g, lerp(238, 138, env.nightW), snow * 0.65); b = lerp(b, lerp(250, 182, env.nightW), snow * 0.65); }
+    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
+  } else if (world === "island") {
+    let r = lerp(lerp(106, 124, env.sunsetW), 32, env.nightW);
+    let g = lerp(lerp(164, 130, env.sunsetW), 62, env.nightW);
+    let b = lerp(lerp(90, 74, env.sunsetW), 54, env.nightW);
+    if (snow > 0) { r = lerp(r, lerp(236, 130, env.nightW), snow * 0.85); g = lerp(g, lerp(244, 150, env.nightW), snow * 0.85); b = lerp(b, lerp(255, 195, env.nightW), snow * 0.85); }
+    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
+  } else {
+    ctx.fillStyle = env.bgHex;
+  }
+  ctx.fillRect(0, 0, cw, ch);
+
+  if (world === "street") {
+    // Infinite scrolling horizontal boulevard with curbs and dashed center line
+    const roadBand = 128;
+    const offX = ((-drive.x % 24) + 24) % 24;
+    const relRoadY = ((-drive.y % roadBand) + roadBand) % roadBand;
+    const curbCol = snow > 0.5 ? (env.nightW > 0.45 ? "#9ab0d4" : "#eef4ff") : (env.nightW > 0.45 ? "#2c3752" : "#94a3b8");
+    const dashCol = env.nightW > 0.45 ? "rgba(255,224,120,0.68)" : "rgba(255,236,150,0.82)";
+    for (let baseRow = relRoadY - roadBand; baseRow < ah / state.squash + roadBand; baseRow += roadBand) {
+      const topCurbY = Math.round((baseRow - 44) * state.squash);
+      const botCurbY = Math.round((baseRow + 26) * state.squash);
+      ctx.fillStyle = curbCol;
+      ctx.fillRect(0, topCurbY * s, cw, Math.max(2, Math.round(18 * state.squash)) * s);
+      ctx.fillRect(0, botCurbY * s, cw, Math.max(2, Math.round(18 * state.squash)) * s);
+      const dashY = Math.round(baseRow * state.squash) * s;
+      ctx.fillStyle = dashCol;
+      for (let gx = offX - 24; gx < aw + 24; gx += 24) {
+        ctx.fillRect(Math.round(gx) * s, dashY, 10 * s, 2 * s);
+      }
+    }
+  } else {
+    const gridStep = 24;
+    const offX = ((-drive.x % gridStep) + gridStep) % gridStep;
+    const offY = ((-drive.y % gridStep) + gridStep) % gridStep;
+    ctx.fillStyle = env.nightW > 0.45 ? "rgba(120,145,205,0.16)" : "rgba(100,116,139,0.16)";
+    for (let gy = offY * state.squash; gy < ah; gy += gridStep * state.squash) {
+      const py = Math.round(gy) * s;
+      for (let gx = offX; gx < aw; gx += gridStep) {
+        ctx.fillRect(Math.round(gx) * s, py, 2 * s, s);
+        ctx.fillRect(Math.round(gx) * s, py, s, 2 * s);
+      }
+    }
+  }
+
+  // Ground rain ripples
+  drawWeatherGroundEffects(ctx, aw, ah, s, env);
+
+  // Draw tire skid marks on ground
+  ctx.fillStyle = env.nightW > 0.45 ? "rgba(4,6,12,0.75)" : "rgba(30,36,46,0.38)";
+  for (let i = 0; i < 240; i++) {
+    const life = drive.skids[i * 3 + 2];
+    if (life <= 0) continue;
+    const sx = Math.round(cx + (drive.skids[i * 3] - drive.x));
+    const sy = Math.round(cy + (drive.skids[i * 3 + 1] - drive.y) * state.squash);
+    if (sx < 0 || sx >= aw || sy < 0 || sy >= ah) continue;
+    ctx.fillRect(sx * s, sy * s, 2 * s, 2 * s);
+  }
+
+  // Draw crisp dual left + right headlight beams on ground at sunset/night
+  if (state.lighting && env.emisGlow > 0.1) {
+    const fx = Math.cos(drive.heading), fy = Math.sin(drive.heading);
+    const rx = -fy, ry = fx;
+    for (const side of [-5, 5]) {
+      for (let d = 14; d <= 48; d += 4) {
+        const tBeam = (d - 14) / 34;
+        const alpha = env.emisGlow * (0.30 + wet * 0.14) * (1 - tBeam * 0.72);
+        ctx.fillStyle = `rgba(255, 242, 182, ${alpha.toFixed(2)})`;
+        const spread = 2 + d * 0.16;
+        const hx = cx + fx * d + rx * side;
+        const hy = cy + (fy * d + ry * side) * state.squash;
+        const wPx = Math.max(2, Math.round(spread * 1.8));
+        const hPx = Math.max(2, Math.round(spread * 1.1 * state.squash));
+        ctx.fillRect(Math.round(hx - wPx / 2) * s, Math.round(hy - hPx / 2) * s, wPx * s, hPx * s);
+      }
+    }
+  }
+
+  // Draw exhaust / drift puffs behind/rising
+  for (let i = 0; i < 96; i++) {
+    const base = i * 6;
+    const life = drive.puffs[base + 5];
+    if (life <= 0) continue;
+    const px = Math.round(cx + (drive.puffs[base] - drive.x));
+    const py = Math.round(cy + (drive.puffs[base + 1] - drive.y) * state.squash - drive.puffs[base + 2]);
+    const sz = life > 0.5 ? 3 : 2;
+    ctx.fillStyle = env.nightW > 0.45
+      ? `rgba(170,185,220,${(life * 0.45).toFixed(2)})`
+      : `rgba(110,120,136,${(life * 0.5).toFixed(2)})`;
+    ctx.fillRect(px * s, py * s, sz * s, sz * s);
+  }
+
+  // Gather Y-sorted world props (tiling seamlessly around vehicle) + vehicle itself!
+  const drawList = [{ kind: "hero", sx: cx, sy: cy }];
+  if (world !== "grid") {
+    const tileX = 128, tileY = 128;
+    const tileProps = world === "street"
+      ? [
+          { key: "lamp", vol: PROCEDURAL_PROPS.lamp, x: 24, y: -35, rot: 90 },
+          { key: "kiosk", vol: PROCEDURAL_PROPS.kiosk, x: 86, y: -38, rot: 0 },
+          { key: "bollard", vol: PROCEDURAL_PROPS.bollard, x: 56, y: 34, rot: 0 },
+          { key: "lamp", vol: PROCEDURAL_PROPS.lamp, x: 108, y: 38, rot: 270 },
+        ]
+      : [
+          { key: "pine", vol: PROCEDURAL_PROPS.pine, x: 22, y: 24, rot: 0 },
+          { key: "pine", vol: PROCEDURAL_PROPS.pine, x: 92, y: 34, rot: 90 },
+          { key: "rock", vol: PROCEDURAL_PROPS.rock, x: 58, y: 88, rot: 30 },
+          { key: "meadowLamp", vol: PROCEDURAL_PROPS.meadowLamp, x: 104, y: 98, rot: 120 },
+        ];
+    const baseTx = Math.floor(drive.x / tileX);
+    const baseTy = Math.floor(drive.y / tileY);
+    for (let ty = baseTy - 1; ty <= baseTy + 1; ty++) {
+      for (let tx = baseTx - 1; tx <= baseTx + 1; tx++) {
+        for (let i = 0; i < tileProps.length; i++) {
+          const p = tileProps[i];
+          const wx = tx * tileX + p.x;
+          const wy = ty * tileY + p.y;
+          const sx = cx + (wx - drive.x);
+          const sy = cy + (wy - drive.y) * state.squash;
+          if (sx < -28 || sx > aw + 28 || sy < -28 || sy > ah + 36) continue;
+          drawList.push({ kind: "prop", key: p.key, vol: p.vol, rot: p.rot, sx, sy });
+        }
+      }
+    }
+  }
+  drawList.sort((a, b) => a.sy - b.sy);
+
+  const spacing = Math.max(0.4, state.spacing + drive.bounce * 0.25);
+  const reflAlpha = wet * (world === "street" ? (env.nightW > 0.45 ? 0.52 : 0.36) : 0.24);
+  for (let i = 0; i < drawList.length; i++) {
+    const it = drawList[i];
+    if (it.kind === "hero") {
+      const buf = rasterizeStackIntoScratch({
+        angleDeg: state.angle,
+        squash: state.squash,
+        spacing,
+        maxSlices: state.slices,
+        shadow: state.shadow,
+        outline: state.outline,
+        leanX: drive.lean,
+      });
+      const ox = Math.round(it.sx - scratch.cx) * s;
+      const oy = Math.round(it.sy - scratch.baseY) * s;
+      if (reflAlpha > 0.02) drawWetReflection(ctx, buf, ox, oy, s, scratch.baseY, reflAlpha);
+      ctx.drawImage(buf, ox, oy, buf.width * s, buf.height * s);
+    } else {
+      // Cached! Zero per-frame rasterization when driving!
+      const cached = getCachedPropSprite(it.key, it.vol, it.rot, state.squash, state.spacing);
+      const ox = Math.round(it.sx - cached.cx) * s;
+      const oy = Math.round(it.sy - cached.baseY) * s;
+      if (reflAlpha > 0.02) drawWetReflection(ctx, cached.canvas, ox, oy, s, cached.baseY, reflAlpha * 0.85);
+      ctx.drawImage(cached.canvas, ox, oy, cached.canvas.width * s, cached.canvas.height * s);
+    }
+  }
+
+  // Weather foreground rain/snow
+  drawWeatherOverlay(ctx, aw, ah, s, env);
+
+  readout.textContent = `${Math.round(drive.speed)} px/s${drive.drifting ? " · DRIFT" : ""} · ${state.lastRenderMs.toFixed(1)}ms`;
+}
+
+// ============================================================
+// TOY MODE: SHATTER (3D Bouncing Voxels + Magnetic Rebuild)
+// ============================================================
+function triggerShatter() {
+  if (!state.vol || shatter.count === 0) return;
+  const rad = (state.angle * Math.PI) / 180;
+  const ca = Math.cos(rad), sa = Math.sin(rad);
+
+  if (shatter.phase === "idle") {
+    shatter.phase = "burst";
+    shatter.t = 0;
+    for (let i = 0; i < shatter.count; i++) {
+      const rx = shatter.hx[i] * ca - shatter.hy[i] * sa;
+      const ry = shatter.hx[i] * sa + shatter.hy[i] * ca;
+      const rz = shatter.hz[i] * state.spacing;
+      shatter.px[i] = rx; shatter.py[i] = ry; shatter.pz[i] = rz;
+      const dist = Math.hypot(rx, ry) + 0.5;
+      const burst = 34 + Math.random() * 58;
+      shatter.vx[i] = (rx / dist) * burst + (Math.random() - 0.5) * 32;
+      shatter.vy[i] = (ry / dist) * burst + (Math.random() - 0.5) * 32;
+      shatter.vz[i] = 40 + Math.random() * 68 + rz * 1.4;
+    }
+  } else if (shatter.phase === "burst") {
+    shatter.phase = "rebuild";
+    shatter.t = 0;
+    for (let i = 0; i < shatter.count; i++) {
+      shatter.sx[i] = shatter.px[i];
+      shatter.sy[i] = shatter.py[i];
+      shatter.sz[i] = shatter.pz[i];
+    }
+  }
+  state.dirty = true;
+}
+
+function updateShatter(dt) {
+  if (shatter.phase === "burst") {
+    shatter.t += dt;
+    const g = 210;
+    for (let i = 0; i < shatter.count; i++) {
+      shatter.vz[i] -= g * dt;
+      shatter.px[i] += shatter.vx[i] * dt;
+      shatter.py[i] += shatter.vy[i] * dt;
+      shatter.pz[i] += shatter.vz[i] * dt;
+      if (shatter.pz[i] < 0) {
+        shatter.pz[i] = 0;
+        shatter.vz[i] = -shatter.vz[i] * 0.44;
+        shatter.vx[i] *= 0.72;
+        shatter.vy[i] *= 0.72;
+        if (Math.abs(shatter.vz[i]) < 6) shatter.vz[i] = 0;
+      }
+    }
+  } else if (shatter.phase === "rebuild") {
+    shatter.t += dt * 1.55;
+    const rad = (state.angle * Math.PI) / 180;
+    const ca = Math.cos(rad), sa = Math.sin(rad);
+    const maxZ = Math.max(1, state.vol.n - 1);
+    let done = true;
+    for (let i = 0; i < shatter.count; i++) {
+      const zFrac = shatter.hz[i] / maxZ;
+      const u = Math.max(0, Math.min(1, (shatter.t - zFrac * 0.35) / 0.65));
+      if (u < 1) done = false;
+      const e = 1 - Math.pow(1 - u, 3);
+      const tx = shatter.hx[i] * ca - shatter.hy[i] * sa;
+      const ty = shatter.hx[i] * sa + shatter.hy[i] * ca;
+      const tz = shatter.hz[i] * state.spacing;
+      shatter.px[i] = lerp(shatter.sx[i], tx, e);
+      shatter.py[i] = lerp(shatter.sy[i], ty, e);
+      shatter.pz[i] = lerp(shatter.sz[i], tz, e);
+    }
+    if (done) shatter.phase = "idle";
+  }
+}
+
+function drawShatterFrame() {
+  const vol = state.vol;
+  const env = getLightingEnv(state.timeOfDay, state.sunAngle);
+  const s = state.scale;
+  const aw = Math.max(120, Math.ceil(Math.hypot(vol.w, vol.h) * 2.8));
+  const ah = Math.max(100, Math.ceil(Math.hypot(vol.w, vol.h) * state.squash * 2.2) + vol.n * 2 + 40);
+  const cw = aw * s, ch = ah * s;
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw;
+    canvas.height = ch;
+  }
+
+  if (shatter.phase === "idle") {
+    const buf = rasterizeStackIntoScratch({
+      angleDeg: state.angle,
+      squash: state.squash,
+      spacing: state.spacing,
+      maxSlices: state.slices,
+      shadow: state.shadow,
+      outline: state.outline,
+    });
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = env.bgHex;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(buf, Math.round((aw - buf.width) / 2) * s, Math.round((ah - buf.height) / 2) * s, buf.width * s, buf.height * s);
+    readout.textContent = `Click / Space to shatter · ${state.lastRenderMs.toFixed(1)}ms`;
+    return;
+  }
+
+  ensureScratch(aw, ah);
+  const out32 = scratch.out32;
+  out32.fill(packABGR(env.bgR, env.bgG, env.bgB, 255));
+  const cx = aw >> 1;
+  const baseY = Math.round(ah * 0.64);
+
+  // Shadows first
+  if (state.shadow) {
+    for (let i = 0; i < shatter.count; i++) {
+      const gx = Math.round(cx + shatter.px[i] + shatter.pz[i] * env.shDx);
+      const gy = Math.round(baseY + (shatter.py[i] + shatter.pz[i] * env.shDy) * state.squash);
+      if (gx >= 0 && gx < aw && gy >= 0 && gy < ah) out32[gy * aw + gx] = env.shPacked;
+    }
+  }
+  // Draw voxels (2x2 art-pixel cubes) sorted roughly back-to-front by screen Y
+  for (let i = 0; i < shatter.count; i++) {
+    const vx = Math.round(cx + shatter.px[i]);
+    const vy = Math.round(baseY + shatter.py[i] * state.squash - shatter.pz[i]);
+    const c = shatter.col[i];
+    for (let dy = 0; dy < 2; dy++) {
+      const yy = vy + dy;
+      if (yy < 0 || yy >= ah) continue;
+      for (let dx = 0; dx < 2; dx++) {
+        const xx = vx + dx;
+        if (xx >= 0 && xx < aw) out32[yy * aw + xx] = c;
+      }
+    }
+  }
+  scratch.ctx.putImageData(scratch.imgData, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(scratch.canvas, 0, 0, cw, ch);
+  readout.textContent = `${shatter.phase === "burst" ? "Click / Space to rebuild" : "Rebuilding..."} · ${shatter.count} voxels · ${state.lastRenderMs.toFixed(1)}ms`;
+}
+
+// ============================================================
+// MAIN FRAME DISPATCH
+// ============================================================
+let windShearBuf = new Float32Array(256);
+
+function drawFrame() {
+  if (!state.vol) return;
+  const t0 = performance.now();
+  const s = state.scale;
+  const env = getLightingEnv(state.timeOfDay, state.sunAngle);
+
+  if (state.mode === "scene") {
+    drawSceneFrame();
+    state.lastRenderMs = performance.now() - t0;
+    return;
+  }
+
+  if (state.mode === "play") {
+    if (state.toy === "drive") {
+      drawDriveFrame();
+      state.lastRenderMs = performance.now() - t0;
+      return;
+    }
+    if (state.toy === "shatter") {
+      drawShatterFrame();
+      state.lastRenderMs = performance.now() - t0;
+      return;
+    }
+    // Wind toy
+    const n = state.slices;
+    if (windShearBuf.length < n) windShearBuf = new Float32Array(n);
+    const gust = 2.6 + 1.4 * Math.sin(state.windPhase * 0.7);
+    const denom = Math.max(1, n - 1);
+    for (let z = 0; z < n; z++) {
+      const hFrac = z / denom;
+      windShearBuf[z] = Math.sin(state.windPhase * 2.8 - z * 0.14) * gust * Math.pow(hFrac, 1.6);
+    }
+    const buf = rasterizeStackIntoScratch({
+      angleDeg: state.angle,
+      squash: state.squash,
+      spacing: state.spacing,
+      maxSlices: state.slices,
+      shadow: state.shadow,
+      outline: state.outline,
+      shearPerSlice: windShearBuf,
+    });
+    const cw = buf.width * s, ch = buf.height * s;
+    if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = env.bgHex;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(buf, 0, 0, cw, ch);
+    // Subtle pixel wind streaks
+    ctx.fillStyle = env.nightW > 0.45 ? "rgba(180,205,255,0.22)" : "rgba(100,116,139,0.22)";
+    for (let i = 0; i < 6; i++) {
+      const wx = ((state.windPhase * (55 + i * 13) + i * 73) % (cw + 40)) - 20;
+      const wy = Math.round(((i + 0.5) / 6) * ch);
+      ctx.fillRect(Math.round(wx / s) * s, Math.round(wy / s) * s, (4 + (i % 3) * 2) * s, s);
+    }
+    state.lastRenderMs = performance.now() - t0;
+    readout.textContent = `Wind · ${Math.round(((state.angle % 360) + 360) % 360)}° · ${state.lastRenderMs.toFixed(1)}ms`;
+    return;
+  }
+
+  if (state.mode === "scan" && state.sideImg && state.topImg) {
+    const zCount = Math.max(1, Math.min(state.slices, Math.round(state.scanZ)));
+    const stackBuf = rasterizeStackIntoScratch({
+      angleDeg: state.angle,
+      squash: state.squash,
+      spacing: state.spacing,
+      maxSlices: zCount,
+      shadow: state.shadow,
+      outline: state.outline,
+    });
+    const gap = 40;
+    const sideW = state.sideImg.width * s, sideH = state.sideImg.height * s;
+    const topW = state.topImg.width * s, topH = state.topImg.height * s;
+    const stW = stackBuf.width * s, stH = stackBuf.height * s;
+
+    const totalW = sideW + topW + stW + gap * 4;
+    const totalH = Math.max(sideH, topH, stH) + 80;
+    if (canvas.width !== totalW || canvas.height !== totalH) {
+      canvas.width = totalW;
+      canvas.height = totalH;
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = env.bgHex;
+    ctx.fillRect(0, 0, totalW, totalH);
+
+    const midY = Math.floor(totalH / 2);
+    const sideX = gap, sideY = Math.floor(midY - sideH / 2);
+    ctx.drawImage(state.sideImg, sideX, sideY, sideW, sideH);
+
+    const scanFrac = 1 - (zCount - 0.5) / state.slices;
+    const lineY = Math.round(sideY + scanFrac * sideH);
+    ctx.fillStyle = "#2563eb";
+    ctx.fillRect(sideX - 10, lineY, sideW + 20, Math.max(2, Math.floor(s / 2)));
+
+    const topX = sideX + sideW + gap, topY = Math.floor(midY - topH / 2);
+    ctx.drawImage(state.topImg, topX, topY, topW, topH);
+
+    const stX = topX + topW + gap, stY = Math.floor(midY - stH / 2);
+    ctx.drawImage(stackBuf, stX, stY, stW, stH);
+
+    ctx.fillStyle = env.nightW > 0.45 ? "#94a3b8" : "#667085";
+    ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillText("SIDE", sideX, sideY + sideH + 18);
+    ctx.fillText("TOP", topX, topY + topH + 18);
+    state.lastRenderMs = performance.now() - t0;
+    readout.textContent = `Z-${String(zCount).padStart(2, "0")} / ${state.slices} · ${state.lastRenderMs.toFixed(1)}ms`;
+    return;
+  }
+
+  const spacing = state.mode === "exploded" && state.playing
+    ? 1.0 + (0.5 - 0.5 * Math.cos(state.explodePhase)) * 2.4
+    : state.spacing;
+
+  const buf = rasterizeStackIntoScratch({
+    angleDeg: state.angle,
+    squash: state.squash,
+    spacing,
+    maxSlices: state.slices,
+    shadow: state.shadow,
+    outline: state.outline,
+    room: state.mode === "exploded" ? Math.max(spacing, 3.4) : spacing,
+  });
+  const cw = buf.width * s, ch = buf.height * s;
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw;
+    canvas.height = ch;
+  }
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, cw, ch);
+  drawWeatherGroundEffects(ctx, buf.width, buf.height, s, env);
+  if (weather.wetness > 0.02) {
+    drawWetReflection(ctx, buf, 0, 0, s, scratch.baseY, weather.wetness * (env.nightW > 0.45 ? 0.5 : 0.34));
+  }
+  ctx.drawImage(buf, 0, 0, cw, ch);
+  drawWeatherOverlay(ctx, buf.width, buf.height, s, env);
+  state.lastRenderMs = performance.now() - t0;
+  readout.textContent = `${Math.round(((state.angle % 360) + 360) % 360)}° · squash ${state.squash.toFixed(2)} · spacing ${spacing.toFixed(2)} · ${state.lastRenderMs.toFixed(1)}ms`;
+}
+
+let lastT = performance.now();
+function tick(now) {
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+
+  if (state.vol) {
+    let needsDraw = state.dirty;
+    if (state.weather !== "clear" || weather.snowCover > 0 || weather.wetness > 0) {
+      updateWeather(dt);
+      needsDraw = true;
+    }
+    if (state.mode === "play") {
+      if (state.toy === "drive") {
+        updateDrive(dt);
+        needsDraw = true;
+      } else if (state.toy === "wind") {
+        if (state.playing) {
+          state.windPhase += dt;
+          needsDraw = true;
+        }
+      } else if (state.toy === "shatter") {
+        if (shatter.phase !== "idle") {
+          updateShatter(dt);
+          needsDraw = true;
+        }
+      }
+    } else if (state.playing) {
+      if (state.mode === "turntable" || state.mode === "scene") {
+        state.angle = (state.angle + dt * (state.mode === "scene" ? 26 : 55)) % 360;
+        els.angle.value = String(Math.round(state.angle));
+        els.angleOut.textContent = `${Math.round(state.angle)}°`;
+        needsDraw = true;
+      } else if (state.mode === "scan") {
+        state.scanZ += dt * Math.max(8, state.slices * 0.42);
+        if (state.scanZ > state.slices + 6) state.scanZ = 1;
+        needsDraw = true;
+      } else if (state.mode === "exploded") {
+        state.explodePhase += dt * 1.6;
+        state.angle = (state.angle + dt * 28) % 360;
+        needsDraw = true;
+      }
+    }
+    if (needsDraw) {
+      drawFrame();
+      state.dirty = false;
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+// View transform: mobile pinch-zoom / two-finger pan via CSS transform on the canvas.
+function applyView() {
+  canvas.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.userZoom})`;
+}
+function resetView() { state.panX = 0; state.panY = 0; state.userZoom = 1; applyView(); }
+function fitView() {
+  if (!state.vol) return;
+  const rect = stage.getBoundingClientRect();
+  if (rect.width < 10 || rect.height < 10) return;
+  const v = state.vol;
+  const modelW = Math.hypot(v.w, v.h) + 10;
+  const modelH = v.h * state.squash + v.n * Math.max(1, state.spacing) + 18;
+  const fit = Math.min(rect.width / modelW, rect.height / modelH) * 0.96;
+  const sc = Math.max(1, Math.min(14, Math.floor(fit)));
+  state.scale = sc;
+  els.scale.value = String(sc); els.scaleOut.textContent = sc + 'x';
+  state.dirty = true;
+}
+const resetViewBtn = document.getElementById("resetView");
+if (resetViewBtn) resetViewBtn.addEventListener("click", resetView);
+
+// Multi-pointer gestures: 1 finger = orbit/tilt, 2 fingers = pinch-zoom + pan, double-tap = reset.
+const pointers = new Map();
+let drag = null;
+let pinch = null;
+let lastTap = 0;
+stage.addEventListener("pointerdown", (e) => {
+  if (e.target.closest(".toy-bar") || e.target.closest(".scene-bar") || e.target.closest("#resetView")) return;
+  if (state.mode === "play" && state.toy === "shatter" && !e.shiftKey && pointers.size === 0) {
+    triggerShatter();
+    return;
+  }
+  stage.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1) {
+    const now = performance.now();
+    if (e.pointerType === "touch" && now - lastTap < 300) { resetView(); lastTap = 0; }
+    else lastTap = now;
+    drag = { x: e.clientX, y: e.clientY, angle: state.angle, squash: state.squash, sun: state.sunAngle, shift: e.shiftKey };
+    pinch = null;
+    if ((state.mode === "turntable" || state.mode === "scene") && !e.shiftKey) {
+      state.playing = false;
+      els.play.textContent = "Play";
+    }
+  } else if (pointers.size === 2) {
+    drag = null;
+    const pts = [...pointers.values()];
+    const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+    pinch = { dist: Math.hypot(dx, dy) || 1, midX: (pts[0].x + pts[1].x) / 2, midY: (pts[0].y + pts[1].y) / 2,
+              zoom: state.userZoom, panX: state.panX, panY: state.panY };
+  }
+});
+stage.addEventListener("pointermove", (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pointers.size >= 2) {
+    const pts = [...pointers.values()];
+    const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const midX = (pts[0].x + pts[1].x) / 2, midY = (pts[0].y + pts[1].y) / 2;
+    state.userZoom = Math.max(0.3, Math.min(8, pinch.zoom * (dist / pinch.dist)));
+    state.panX = pinch.panX + (midX - pinch.midX);
+    state.panY = pinch.panY + (midY - pinch.midY);
+    applyView();
+    return;
+  }
+  if (drag && pointers.size === 1) {
+    if (drag.shift) {
+      state.sunAngle = ((drag.sun + (e.clientX - drag.x) * 0.7) % 360 + 360) % 360;
+      els.sun.value = String(Math.round(state.sunAngle));
+      els.sunOut.textContent = `${Math.round(state.sunAngle)}°`;
+    } else {
+      state.angle = ((drag.angle + (e.clientX - drag.x) * 0.6) % 360 + 360) % 360;
+      state.squash = Math.max(0.45, Math.min(1.0, drag.squash + (e.clientY - drag.y) * 0.002));
+      els.angle.value = String(Math.round(state.angle));
+      els.angleOut.textContent = `${Math.round(state.angle)}°`;
+      els.squash.value = state.squash.toFixed(2);
+      els.squashOut.textContent = state.squash.toFixed(2);
+    }
+    state.dirty = true;
+  }
+});
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (pointers.size === 0) drag = null;
+  else if (pointers.size === 1) {
+    const p = [...pointers.values()][0];
+    drag = { x: p.x, y: p.y, angle: state.angle, squash: state.squash, sun: state.sunAngle, shift: false };
+  }
+}
+stage.addEventListener("pointerup", endPointer);
+stage.addEventListener("pointercancel", endPointer);
+window.addEventListener("resize", fitView);
+// Re-fit when the stage actually gets its layout size (iframe/mobile late layout) — fixes "blank white" on open.
+if (typeof ResizeObserver !== "undefined") {
+  let lastW = 0, lastH = 0;
+  new ResizeObserver(() => {
+    const r = stage.getBoundingClientRect();
+    if (Math.abs(r.width - lastW) > 1 || Math.abs(r.height - lastH) > 1) {
+      lastW = r.width; lastH = r.height; fitView();
+    }
+  }).observe(stage);
+}
+setTimeout(fitView, 120);
+setTimeout(fitView, 500);
+
+function syncPlayUI() {
+  const isPlay = state.mode === "play";
+  const isScene = state.mode === "scene";
+  toyBar.classList.toggle("visible", isPlay);
+  sceneBar.classList.toggle("visible", isScene);
+  driveWorldGroup.style.display = isPlay && state.toy === "drive" ? "inline-flex" : "none";
+  clearPropsBtn.style.display = state.userProps.length > 0 ? "inline-block" : "none";
+  stage.classList.toggle("play-drive", isPlay && state.toy === "drive");
+  stage.classList.toggle("play-shatter", isPlay && state.toy === "shatter");
+  if (state.toy === "drive") toyHint.textContent = "WASD / Arrows · Space drift";
+  else if (state.toy === "wind") toyHint.textContent = "Live breeze · Drag to orbit";
+  else toyHint.textContent = "Click or Space to shatter / rebuild";
+}
+
+// Mode controls
+document.querySelectorAll("[data-mode]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.mode = btn.dataset.mode;
+    document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    if (state.mode === "scan") state.scanZ = 1;
+    if (state.mode === "exploded") state.explodePhase = 0;
+    if (state.mode === "play") {
+      state.playing = true;
+      els.play.textContent = "Pause";
+    }
+    syncPlayUI();
+    state.dirty = true;
+  });
+});
+
+document.querySelectorAll("[data-scene]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.scene = btn.dataset.scene;
+    document.querySelectorAll("[data-scene]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    state.dirty = true;
+  });
+});
+
+document.querySelectorAll("[data-drive-world]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.driveWorld = btn.dataset.driveWorld;
+    document.querySelectorAll("[data-drive-world]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    state.dirty = true;
+  });
+});
+
+document.querySelectorAll("[data-weather]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.weather = btn.dataset.weather;
+    document.querySelectorAll("[data-weather]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    if (state.weather === "rain" && weather.wetness < 0.35) weather.wetness = 0.55;
+    if (state.weather === "snow" && weather.snowCover < 0.25) weather.snowCover = 0.35;
+    state.dirty = true;
+  });
+});
+
+clearPropsBtn.addEventListener("click", () => {
+  state.userProps = [];
+  propCache.clear();
+  syncPlayUI();
+  state.dirty = true;
+});
+
+document.querySelectorAll("[data-toy]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.toy = btn.dataset.toy;
+    document.querySelectorAll("[data-toy]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    if (state.toy === "shatter") shatter.phase = "idle";
+    syncPlayUI();
+    state.dirty = true;
+  });
+});
+
+els.play.addEventListener("click", () => {
+  state.playing = !state.playing;
+  els.play.textContent = state.playing ? "Pause" : "Play";
+  state.dirty = true;
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  if (state.mode === "play" && state.toy === "drive") {
+    if (e.code === "KeyW" || e.code === "ArrowUp") { keys.up = true; e.preventDefault(); return; }
+    if (e.code === "KeyS" || e.code === "ArrowDown") { keys.down = true; e.preventDefault(); return; }
+    if (e.code === "KeyA" || e.code === "ArrowLeft") { keys.left = true; e.preventDefault(); return; }
+    if (e.code === "KeyD" || e.code === "ArrowRight") { keys.right = true; e.preventDefault(); return; }
+    if (e.code === "Space") { keys.brake = true; e.preventDefault(); return; }
+  }
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (state.mode === "play" && state.toy === "shatter") triggerShatter();
+    else els.play.click();
+  }
+});
+window.addEventListener("keyup", (e) => {
+  if (e.code === "KeyW" || e.code === "ArrowUp") keys.up = false;
+  if (e.code === "KeyS" || e.code === "ArrowDown") keys.down = false;
+  if (e.code === "KeyA" || e.code === "ArrowLeft") keys.left = false;
+  if (e.code === "KeyD" || e.code === "ArrowRight") keys.right = false;
+  if (e.code === "Space") keys.brake = false;
+});
+
+els.angle.addEventListener("input", () => {
+  state.angle = Number(els.angle.value);
+  els.angleOut.textContent = `${state.angle}°`;
+  state.playing = false;
+  els.play.textContent = "Play";
+  state.dirty = true;
+});
+els.squash.addEventListener("input", () => {
+  state.squash = Number(els.squash.value);
+  els.squashOut.textContent = state.squash.toFixed(2);
+  state.dirty = true;
+});
+els.spacing.addEventListener("input", () => {
+  state.spacing = Number(els.spacing.value);
+  els.spacingOut.textContent = state.spacing.toFixed(2);
+  state.dirty = true;
+});
+els.scale.addEventListener("input", () => {
+  state.scale = Number(els.scale.value);
+  els.scaleOut.textContent = `${state.scale}x`;
+  state.dirty = true;
+});
+els.slices.addEventListener("change", () => {
+  const n = Math.max(1, Number(els.slices.value) || 1);
+  state.slices = n;
+  if (state.sheetImg) extractSlices(state.sheetImg, n);
+});
+els.time.addEventListener("input", () => {
+  state.timeOfDay = Number(els.time.value);
+  updateStageTheme();
+  state.dirty = true;
+});
+els.sun.addEventListener("input", () => {
+  state.sunAngle = Number(els.sun.value);
+  els.sunOut.textContent = `${state.sunAngle}°`;
+  state.dirty = true;
+});
+els.light.addEventListener("change", () => { state.lighting = els.light.checked; state.dirty = true; });
+els.shadow.addEventListener("change", () => { state.shadow = els.shadow.checked; state.dirty = true; });
+els.outline.addEventListener("change", () => { state.outline = els.outline.checked; state.dirty = true; });
+
+// Export 16-direction baked sprite sheet (with current lighting & shadows)
+els.exportBtn.addEventListener("click", () => {
+  if (!state.vol) return;
+  const dirs = 16;
+  const frames = [];
+  for (let i = 0; i < dirs; i++) {
+    const buf = rasterizeStackIntoScratch({
+      angleDeg: (i * 360) / dirs,
+      squash: state.squash,
+      spacing: state.spacing,
+      maxSlices: state.slices,
+      shadow: state.shadow,
+      outline: state.outline,
+    });
+    const copy = document.createElement("canvas");
+    copy.width = buf.width;
+    copy.height = buf.height;
+    copy.getContext("2d").drawImage(buf, 0, 0);
+    frames.push(copy);
+  }
+  const fw = frames[0].width, fh = frames[0].height;
+  const out = document.createElement("canvas");
+  out.width = fw * dirs;
+  out.height = fh;
+  const octx = out.getContext("2d");
+  octx.imageSmoothingEnabled = false;
+  frames.forEach((f, i) => octx.drawImage(f, i * fw, 0));
+  const a = document.createElement("a");
+  a.download = `${titleText.textContent.toLowerCase().replace(/\s+/g, "-")}-16dir.png`;
+  a.href = out.toDataURL("image/png");
+  a.click();
+});
+
+// File load / drag-drop (supports multi-PNG diorama drops and + Add Prop)
+async function addPropFile(file) {
+  const url = URL.createObjectURL(file);
+  const img = await loadImage(url);
+  // Infer slice count from aspect ratio if height divides width cleanly, else fall back to current slices
+  const guessed = img.height > 0 && img.width >= img.height * 2
+    ? Math.max(1, Math.round(img.width / img.height))
+    : state.slices;
+  const vol = extractVolumeFromImage(img, guessed, false);
+  if (!vol) return;
+  const slots = [[-26, 2], [26, 4], [-18, -16], [18, 16], [-32, -12], [32, -12]];
+  const slot = slots[state.userProps.length % slots.length];
+  state.userProps.push({
+    name: file.name.replace(/\.[^.]+$/, ""),
+    vol,
+    x: slot[0],
+    y: slot[1],
+    rot: (state.userProps.length * 45) % 360,
+  });
+  if (state.mode !== "scene") {
+    state.mode = "scene";
+    document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === "scene")));
+  }
+  syncPlayUI();
+  state.dirty = true;
+}
+
+async function loadFile(file) {
+  const url = URL.createObjectURL(file);
+  const img = await loadImage(url);
+  state.sheetImg = img;
+  state.topImg = null;
+  state.sideImg = null;
+  titleText.textContent = file.name.replace(/\.[^.]+$/, "");
+  extractSlices(img, state.slices);
+}
+
+document.getElementById("fileInput").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  await loadFile(files[0]);
+  for (let i = 1; i < files.length; i++) await addPropFile(files[i]);
+});
+document.getElementById("propInput").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  for (const f of files) await addPropFile(f);
+  e.target.value = "";
+});
+window.addEventListener("dragover", (e) => { e.preventDefault(); document.body.classList.add("dragging"); });
+window.addEventListener("dragleave", (e) => { if (e.target === document.documentElement) document.body.classList.remove("dragging"); });
+window.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  document.body.classList.remove("dragging");
+  const files = Array.from(e.dataTransfer.files || []);
+  if (!files.length) return;
+  if (e.shiftKey || state.mode === "scene") {
+    for (const f of files) await addPropFile(f);
+  } else {
+    await loadFile(files[0]);
+    for (let i = 1; i < files.length; i++) await addPropFile(files[i]);
+  }
+});
+
+async function init() {
+  updateStageTheme();
+  if (EMBEDDED) {
+    titleText.textContent = EMBEDDED.title || "Sprite Stack";
+    state.slices = EMBEDDED.slices;
+    els.slices.value = String(EMBEDDED.slices);
+    state.sheetImg = await loadImage(EMBEDDED.sheet);
+    if (EMBEDDED.top) state.topImg = await loadImage(EMBEDDED.top);
+    if (EMBEDDED.side) state.sideImg = await loadImage(EMBEDDED.side);
+    extractSlices(state.sheetImg, state.slices, EMBEDDED.cols || state.slices);
+  }
+  requestAnimationFrame(tick);
+}
+init();
+</script>
+</body>
+</html>
